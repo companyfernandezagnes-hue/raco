@@ -1,0 +1,7 @@
+{
+  "name": "Raco Blanquerna SL",
+  "description": "Sistema integral de gestión y contabilidad para Raco Blanquerna SL, basado en la metodología Mise en Place. Incluye módulos de albaranes, facturas, tesorería y escandallos.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

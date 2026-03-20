@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "manager", "staff"] }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "DeliveryNote": {
+      "title": "Delivery Note",
+      "description": "Supplier delivery note",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "supplierId": { "type": "string" },
+        "reference": { "type": "string" },
+        "status": { "type": "string", "enum": ["Pendiente", "Recibido", "Facturado", "Rechazado"] },
+        "total": { "type": "number" },
+        "items": { "type": "array" }
+      },
+      "required": ["date", "supplierId", "reference", "status", "total"]
+    },
+    "SupplierInvoice": {
+      "title": "Supplier Invoice",
+      "description": "Invoice from a supplier",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string", "format": "date" },
+        "supplierId": { "type": "string" },
+        "number": { "type": "string" },
+        "dueDate": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["Pendiente", "Pagado", "Vencido"] },
+        "total": { "type": "number" },
+        "tax": { "type": "number" },
+        "deliveryNoteIds": { "type": "array" }
+      },
+      "required": ["date", "supplierId", "number", "dueDate", "status", "total"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/deliveryNotes/{noteId}": {
+      "schema": "DeliveryNote",
+      "description": "Delivery notes"
+    },
+    "/supplierInvoices/{invoiceId}": {
+      "schema": "SupplierInvoice",
+      "description": "Supplier invoices"
+    }
+  }
+}

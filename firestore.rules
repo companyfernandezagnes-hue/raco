@@ -1,0 +1,125 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required, email format)
+    //   - displayName: string (optional)
+    //   - photoURL: string (optional)
+    //   - role: string (required, ['admin', 'manager', 'staff'])
+    //
+    // Collection: deliveryNotes
+    // Document ID: {noteId}
+    // Fields:
+    //   - date: string (required, YYYY-MM-DD)
+    //   - supplierId: string (required)
+    //   - reference: string (required)
+    //   - status: string (required, ['Pendiente', 'Recibido', 'Facturado', 'Rechazado'])
+    //   - total: number (required, positive)
+    //   - items: list (optional)
+    //
+    // Collection: supplierInvoices
+    // Document ID: {invoiceId}
+    // Fields:
+    //   - date: string (required, YYYY-MM-DD)
+    //   - supplierId: string (required)
+    //   - number: string (required)
+    //   - dueDate: string (required, YYYY-MM-DD)
+    //   - status: string (required, ['Pendiente', 'Pagado', 'Vencido'])
+    //   - total: number (required, positive)
+    //   - tax: number (optional)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "companyfernandezagnes@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isManager() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'manager';
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidDate(dateStr) {
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role']) &&
+             data.uid == request.auth.uid &&
+             isValidEmail(data.email) &&
+             data.role in ['admin', 'manager', 'staff'];
+    }
+
+    function isValidDeliveryNote(data) {
+      return data.keys().hasAll(['date', 'supplierId', 'reference', 'status', 'total']) &&
+             isValidDate(data.date) &&
+             data.status in ['Pendiente', 'Recibido', 'Facturado', 'Rechazado'] &&
+             data.total is number && data.total >= 0;
+    }
+
+    function isValidSupplierInvoice(data) {
+      return data.keys().hasAll(['date', 'supplierId', 'number', 'dueDate', 'status', 'total']) &&
+             isValidDate(data.date) &&
+             isValidDate(data.dueDate) &&
+             data.status in ['Pendiente', 'Pagado', 'Vencido'] &&
+             data.total is number && data.total >= 0;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'staff' || isAdmin());
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == resource.data.role || isAdmin());
+    }
+
+    match /deliveryNotes/{noteId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidDeliveryNote(request.resource.data);
+      allow update: if isAuthenticated() && isValidDeliveryNote(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /supplierInvoices/{invoiceId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidSupplierInvoice(request.resource.data);
+      allow update: if isAuthenticated() && isValidSupplierInvoice(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
