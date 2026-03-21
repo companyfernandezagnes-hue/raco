@@ -35,14 +35,14 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { mockStock, mockSuppliers } from '../data/mockData';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { useRole } from '../context/RoleContext';
+import { usePin } from '../context/PinContext';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 export default function StockView() {
-  const { role } = useRole();
+  const { rol } = usePin();
   const [activeTab, setActiveTab] = React.useState<'inventario' | 'movimientos' | 'innovaciones'>('inventario');
   const [filter, setFilter] = React.useState<'Todos' | 'Comida' | 'Bebida' | 'Suministros'>('Todos');
   const [search, setSearch] = React.useState('');
@@ -355,7 +355,7 @@ export default function StockView() {
                     <div className="flex items-center justify-center gap-3">
                       <button 
                         onClick={() => updateStock(item.id, -1)}
-                        disabled={role !== 'ADMIN'}
+                        disabled={rol !== 'admin'}
                         className="w-8 h-8 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center hover:bg-rose-50 hover:text-rose-600 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         <ArrowDown size={14} />
@@ -368,7 +368,7 @@ export default function StockView() {
                       </span>
                       <button 
                         onClick={() => updateStock(item.id, 1)}
-                        disabled={role !== 'ADMIN'}
+                        disabled={rol !== 'admin'}
                         className="w-8 h-8 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center hover:bg-emerald-50 hover:text-emerald-600 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                       >
                         <ArrowUp size={14} />
