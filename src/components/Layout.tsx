@@ -4,7 +4,7 @@ import {
   LayoutDashboard, 
   FileText, 
   Receipt, 
-  Wallet, 
+  Wallet,
   ChefHat, 
   Users, 
   Package, 
@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { useFirebase } from '../context/FirebaseContext';
+import { useSupabase } from '../context/SupabaseContext';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -55,12 +55,12 @@ const navigation = [
 import AIAdvisor from './AIAdvisor';
 import { TelegramWidget } from './TelegramWidget';
 import { useLocation } from 'react-router-dom';
-import { useRole } from '../context/RoleContext';
+import { usePin } from '../context/PinContext';
 
 export default function Layout() {
-  const { role } = useRole();
+  const { rol } = usePin();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
-  const { userProfile, logout } = useFirebase();
+  const { employee, logout } = useSupabase();
   const location = useLocation();
   const [isDarkMode, setIsDarkMode] = React.useState(() => {
     if (typeof window !== 'undefined') {
@@ -81,15 +81,15 @@ export default function Layout() {
   }, [isDarkMode]);
 
   const filteredNavigation = React.useMemo(() => {
-    if (role === 'ADMIN') return navigation;
-    if (role === 'WAITER') {
+    if (rol === 'admin') return navigation;
+    if (rol === 'camarero') {
       return navigation.filter(n => ['Compras & Gastos', 'Inventario'].includes(n.name));
     }
-    if (role === 'COOK') {
+    if (rol === 'cocinero') {
       return navigation.filter(n => ['Escandallos', 'Inventario', 'Análisis de Menú'].includes(n.name));
     }
     return [];
-  }, [role]);
+  }, [rol]);
 
   const currentModuleName = React.useMemo(() => {
     const path = location.pathname;
@@ -201,12 +201,12 @@ export default function Layout() {
               <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border-2 border-white dark:border-slate-900" />
             </button>
             <div className="text-right hidden sm:block">
-              <p className="text-sm font-semibold text-slate-900 dark:text-white">{userProfile?.displayName || 'Usuario'}</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">{userProfile?.email}</p>
+              <p className="text-sm font-semibold text-slate-900 dark:text-white">{employee?.nombre || 'Usuario'}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{employee?.email}</p>
             </div>
             <div className="w-10 h-10 rounded-full bg-slate-200 border-2 border-white shadow-sm overflow-hidden">
               <img 
-                src={userProfile?.photoURL || "https://picsum.photos/seed/admin/100/100"} 
+                src={undefined || "https://picsum.photos/seed/admin/100/100"} 
                 alt="Avatar" 
                 referrerPolicy="no-referrer"
               />
