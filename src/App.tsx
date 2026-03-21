@@ -226,7 +226,7 @@ function AppContent() {
   }
 
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/raco">
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<DashboardView />} />
