@@ -51,7 +51,7 @@ import { cn, formatCurrency, formatDate } from '../lib/utils';
 import { mockRecipes } from '../data/mockData';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
-import { useRole } from '../context/RoleContext';
+import { usePin } from '../context/PinContext';
 import { 
   ResponsiveContainer, 
   RadarChart, 
@@ -68,7 +68,7 @@ import {
 } from 'recharts';
 
 export default function EscandallosView() {
-  const { role } = useRole();
+  const { rol } = usePin();
   const [recipes, setRecipes] = React.useState<Recipe[]>(mockRecipes);
   const [selectedRecipeId, setSelectedRecipeId] = React.useState<string>(mockRecipes[0].id);
   const [activeTab, setActiveTab] = React.useState<'escandallo' | 'analisis' | 'optimizacion' | 'mermas' | 'innovaciones'>('escandallo');
@@ -353,7 +353,7 @@ export default function EscandallosView() {
     recognition.start();
   };
 
-  if (role === 'WAITER') {
+  if (rol === 'camarero') {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-8">
         <div className="w-20 h-20 bg-rose-100 text-rose-600 rounded-3xl flex items-center justify-center mb-6">
@@ -393,7 +393,7 @@ export default function EscandallosView() {
             <Scale size={18} className="text-amber-500" />
             Gestión de Mermas
           </button>
-          {role === 'ADMIN' && (
+          {rol === 'admin' && (
             <button 
               onClick={() => setIsModalOpen(true)}
               className="flex items-center gap-2 bg-emerald-600 text-white px-5 py-3 rounded-2xl text-sm font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
