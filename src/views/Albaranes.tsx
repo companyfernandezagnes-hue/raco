@@ -6,7 +6,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { GoogleGenAI } from "@google/genai";
 import { mockAlbaranes, mockSuppliers } from '../data/mockData';
-import { useRole } from '../context/RoleContext';
+import { usePin } from '../context/PinContext';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -15,7 +15,7 @@ function cn(...inputs: ClassValue[]) {
 const supplierNames: Record<string, string> = mockSuppliers.reduce((acc, s) => ({ ...acc, [s.id]: s.name }), {});
 
 export default function AlbaranesView() {
-  const { role } = useRole();
+  const { rol } = usePin();
   const [searchTerm, setSearchTerm] = React.useState('');
   const [isScanning, setIsScanning] = React.useState(false);
   const [scanProgress, setScanProgress] = React.useState(0);
@@ -376,7 +376,7 @@ export default function AlbaranesView() {
                 <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Fecha</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Referencia</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Proveedor</th>
-                {role === 'ADMIN' && <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Total</th>}
+                {rol === 'admin' && <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Total</th>}
                 <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Estado</th>
                 <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">Acciones</th>
               </tr>
@@ -406,7 +406,7 @@ export default function AlbaranesView() {
                     <td className="px-6 py-4 text-sm font-semibold text-slate-900">
                       {supplierNames[alb.supplierId] || 'Proveedor Desconocido'}
                     </td>
-                    {role === 'ADMIN' && (
+                    {rol === 'admin' && (
                       <td className="px-6 py-4 text-sm font-bold text-slate-900">
                         {alb.total.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' })}
                       </td>
@@ -425,7 +425,7 @@ export default function AlbaranesView() {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
-                        {role === 'ADMIN' ? (
+                        {rol === 'admin' ? (
                           <>
                             <button 
                               onClick={() => handleConvertToInvoice(alb)}
