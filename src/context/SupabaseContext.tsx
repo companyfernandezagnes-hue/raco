@@ -21,24 +21,35 @@ export const SupabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [error, setError] = useState<string | null>(null);
 
   const fetchEmployee = async (email: string): Promise<Employee | null> => {
-    const { data, error } = await supabase
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    const { data, error: fetchError } = await supabase
       .from('employees')
       .select('*')
       .eq('email', email)
+      .eq('activo', true)
       .single();
 
-    if (error || !data) return null;
+    if (fetchError || !data) {
+      console.log('fetchEmployee error:', fetchError, 'email buscado:', email);
+      return null;
+    }
+
     return data as Employee;
   };
 
   const handleSession = async (sess: Session | null) => {
+    setLoading(true);
+
     if (!sess) {
       setEmployee(null);
+      setSession(null);
       setLoading(false);
       return;
     }
 
     const email = sess.user.email;
+
     if (!email) {
       await supabase.auth.signOut();
       setError('No se pudo obtener el email del usuario.');
@@ -66,6 +77,7 @@ export const SupabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return;
     }
 
+    setSession(sess);
     setEmployee(emp);
     setError(null);
     setLoading(false);
@@ -73,15 +85,14 @@ export const SupabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: sess } }) => {
-      setSession(sess);
       handleSession(sess);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, sess) => {
-      setSession(sess);
       if (sess) {
         handleSession(sess);
       } else {
+        setSession(null);
         setEmployee(null);
         setLoading(false);
       }
@@ -92,19 +103,19 @@ export const SupabaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const loginWithGoogle = async () => {
     setError(null);
-    const { error } = await supabase.auth.signInWithOAuth({
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
         redirectTo: window.location.origin + '/raco'
       }
     });
-    if (error) setError(error.message);
+    if (oauthError) setError(oauthError.message);
   };
 
   const loginWithEmail = async (email: string, password: string) => {
     setError(null);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setError(error.message);
+    const { error: emailError } = await supabase.auth.signInWithPassword({ email, password });
+    if (emailError) setError(emailError.message);
   };
 
   const logout = async () => {
