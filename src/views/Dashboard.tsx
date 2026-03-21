@@ -22,15 +22,15 @@ import {
   Plus,
   ShieldCheck
 } from 'lucide-react';
-import { useFirebase } from '../context/FirebaseContext';
+import { useSupabase } from '../context/SupabaseContext';
 import { cn, formatCurrency } from '../lib/utils';
 import { useNavigate } from 'react-router-dom';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 
 const DashboardView = () => {
-  const { userProfile } = useFirebase();
+  const { employee } = useSupabase();
   const navigate = useNavigate();
-  const role = userProfile?.role || 'Encargado';
+  const role = employee?.rol || 'Encargado';
 
   const isAccountant = role === 'Contable' || role === 'Gestor' || role === 'admin';
 
