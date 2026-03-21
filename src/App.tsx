@@ -1,5 +1,5 @@
 import React, { Component, ReactNode } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import AlbaranesView from './views/Albaranes';
 import FacturasView from './views/Facturas';
@@ -20,21 +20,29 @@ import ProveedoresView from './views/Proveedores';
 import ComprasView from './views/Compras';
 import MenuView from './views/MenuView';
 import { useAppData } from './hooks/useAppData';
-import { FirebaseProvider, useFirebase } from './context/FirebaseContext';
-import { RoleProvider, useRole, UserRole } from './context/RoleContext';
-import { LogIn, AlertTriangle, User, Key, ShieldCheck, ChefHat, ClipboardList, X } from 'lucide-react';
+import { SupabaseProvider, useSupabase } from './context/SupabaseContext';
+import { PinProvider, usePin } from './context/PinContext';
+import { EmployeeRol } from './supabase';
+import { LogIn, AlertTriangle, Key, ShieldCheck, ChefHat, ClipboardList } from 'lucide-react';
 
+// Tabla de permisos por rol
+const ROLE_PERMISSIONS: Record<EmployeeRol, string[]> = {
+  admin: ['*'],
+  cocinero: ['/', '/escandallos', '/menu', '/inventario', '/albaranes', '/proveedores', '/evaluacion-cartas'],
+  camarero: ['/', '/inventario', '/proveedores'],
+};
+
+const hasAccess = (rol: EmployeeRol, path: string): boolean => {
+  const perms = ROLE_PERMISSIONS[rol];
+  if (perms.includes('*')) return true;
+  return perms.includes(path);
+};
+
+// ---- Error Boundary ----
 class ErrorBoundary extends Component<any, any> {
   state = { hasError: false, error: null };
-
-  static getDerivedStateFromError(error: any) {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error: any, errorInfo: any) {
-    console.error("ErrorBoundary caught an error", error, errorInfo);
-  }
-
+  static getDerivedStateFromError(error: any) { return { hasError: true, error }; }
+  componentDidCatch(error: any, errorInfo: any) { console.error('ErrorBoundary', error, errorInfo); }
   render() {
     if (this.state.hasError) {
       return (
@@ -44,27 +52,24 @@ class ErrorBoundary extends Component<any, any> {
               <AlertTriangle size={40} />
             </div>
             <h1 className="text-2xl font-bold text-slate-900">Algo ha salido mal</h1>
-            <p className="text-slate-500">Ha ocurrido un error inesperado. Por favor, recarga la página o contacta con soporte.</p>
-            <pre className="text-[10px] bg-slate-100 p-4 rounded-xl overflow-auto max-h-40 text-left">
-              {JSON.stringify(this.state.error, null, 2)}
-            </pre>
-            <button 
-              onClick={() => window.location.reload()}
-              className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold hover:bg-slate-800 transition-all"
-            >
-              Recargar Aplicación
+            <p className="text-slate-500">Ha ocurrido un error inesperado. Por favor, recarga la pagina.</p>
+            <button onClick={() => window.location.reload()} className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold hover:bg-slate-800 transition-all">
+              Recargar Aplicacion
             </button>
           </div>
         </div>
       );
     }
-
     return (this as any).props.children;
   }
 }
 
+// ---- Pantalla de Login ----
 function LoginScreen() {
-  const { login, loading } = useFirebase();
+  const { loginWithGoogle, loginWithEmail, loading, error } = useSupabase();
+  const [email, setEmail] = React.useState('');
+  const [password, setPassword] = React.useState('');
+  const [showEmail, setShowEmail] = React.useState(false);
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
@@ -74,141 +79,163 @@ function LoginScreen() {
             <LogIn size={40} />
           </div>
           <h1 className="text-4xl font-black tracking-tight text-slate-900">Raco Blanquerna SL</h1>
-          <p className="text-slate-500 font-medium">Gestión integral de restauración</p>
+          <p className="text-slate-500 font-medium">Gestion integral de restauracion</p>
         </div>
 
-        <button 
-          onClick={login}
-          disabled={loading}
-          className="w-full bg-white border border-slate-200 text-slate-700 py-4 rounded-2xl font-bold flex items-center justify-center gap-3 hover:bg-slate-50 transition-all shadow-sm disabled:opacity-50"
-        >
-          <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
-          Continuar con Google
-        </button>
+        {error && (
+          <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-2xl text-sm font-medium text-center">
+            {error}
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <button
+            onClick={loginWithGoogle}
+            disabled={loading}
+            className="w-full bg-white border border-slate-200 text-slate-700 py-4 rounded-2xl font-bold flex items-center justify-center gap-3 hover:bg-slate-50 transition-all shadow-sm disabled:opacity-50"
+          >
+            <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
+            Continuar con Google
+          </button>
+
+          <button
+            onClick={() => setShowEmail(!showEmail)}
+            className="w-full text-slate-400 text-sm font-medium hover:text-slate-600 transition-colors"
+          >
+            {showEmail ? 'Ocultar acceso con email' : 'Acceder con email y contrasena'}
+          </button>
+
+          {showEmail && (
+            <div className="space-y-3">
+              <input
+                type="email"
+                placeholder="Email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                className="w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl text-slate-900 focus:border-emerald-500 outline-none"
+              />
+              <input
+                type="password"
+                placeholder="Contrasena"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                className="w-full px-4 py-3 bg-white border border-slate-200 rounded-2xl text-slate-900 focus:border-emerald-500 outline-none"
+              />
+              <button
+                onClick={() => loginWithEmail(email, password)}
+                disabled={loading || !email || !password}
+                className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-bold hover:bg-emerald-700 transition-all disabled:opacity-50"
+              >
+                Iniciar sesion
+              </button>
+            </div>
+          )}
+        </div>
 
         <p className="text-center text-xs text-slate-400 font-medium">
-          Al continuar, aceptas nuestros términos y condiciones.
+          Al continuar, aceptas nuestros terminos y condiciones.
         </p>
       </div>
     </div>
   );
 }
 
-function RoleSwitcher() {
-  const { role, setRole } = useRole();
-  const [isOpen, setIsOpen] = React.useState(false);
+// ---- Pantalla de PIN ----
+function PinScreen() {
+  const { employee, logout } = useSupabase();
+  const { verificarPin, pinError, intentosRestantes } = usePin();
   const [pin, setPin] = React.useState('');
-  const [targetRole, setTargetRole] = React.useState<UserRole | null>(null);
+  const [checking, setChecking] = React.useState(false);
 
-  const handleSwitch = () => {
-    if (targetRole && setRole(targetRole, pin)) {
-      setIsOpen(false);
-      setPin('');
-      setTargetRole(null);
-    } else {
-      alert('PIN Incorrecto');
-    }
+  const handleVerify = async () => {
+    if (pin.length !== 4) return;
+    setChecking(true);
+    await verificarPin(pin);
+    setPin('');
+    setChecking(false);
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') handleVerify();
+  };
+
+  const rolIcon = employee?.rol === 'admin'
+    ? <ShieldCheck size={24} />
+    : employee?.rol === 'cocinero'
+    ? <ChefHat size={24} />
+    : <ClipboardList size={24} />;
+
   return (
-    <div className="fixed bottom-6 right-6 z-[100]">
-      <button 
-        onClick={() => setIsOpen(true)}
-        className="w-14 h-14 bg-slate-900 text-white rounded-2xl flex items-center justify-center shadow-2xl hover:scale-105 transition-all"
-      >
-        {role === 'ADMIN' ? <ShieldCheck size={24} /> : role === 'COOK' ? <ChefHat size={24} /> : <ClipboardList size={24} />}
-      </button>
-
-      {isOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-300">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">Cambiar Rol</h3>
-              <button onClick={() => setIsOpen(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-all">
-                <X size={20} className="text-slate-400" />
-              </button>
-            </div>
-
-            {!targetRole ? (
-              <div className="grid grid-cols-1 gap-3">
-                <button 
-                  onClick={() => setTargetRole('ADMIN')}
-                  className="flex items-center gap-4 p-4 rounded-2xl border border-slate-100 hover:bg-slate-50 transition-all text-left"
-                >
-                  <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center">
-                    <ShieldCheck size={24} />
-                  </div>
-                  <div>
-                    <p className="font-black text-slate-900 text-sm uppercase tracking-widest">Administrador</p>
-                    <p className="text-[10px] text-slate-400 font-bold uppercase">Acceso Total</p>
-                  </div>
-                </button>
-                <button 
-                  onClick={() => setTargetRole('COOK')}
-                  className="flex items-center gap-4 p-4 rounded-2xl border border-slate-100 hover:bg-slate-50 transition-all text-left"
-                >
-                  <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center">
-                    <ChefHat size={24} />
-                  </div>
-                  <div>
-                    <p className="font-black text-slate-900 text-sm uppercase tracking-widest">Cocinero</p>
-                    <p className="text-[10px] text-slate-400 font-bold uppercase">Recetas y Escandallos</p>
-                  </div>
-                </button>
-                <button 
-                  onClick={() => setTargetRole('WAITER')}
-                  className="flex items-center gap-4 p-4 rounded-2xl border border-slate-100 hover:bg-slate-50 transition-all text-left"
-                >
-                  <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center">
-                    <ClipboardList size={24} />
-                  </div>
-                  <div>
-                    <p className="font-black text-slate-900 text-sm uppercase tracking-widest">Camarero</p>
-                    <p className="text-[10px] text-slate-400 font-bold uppercase">Fotos de Albaranes</p>
-                  </div>
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                <div className="text-center">
-                  <p className="text-sm font-bold text-slate-500 mb-4 uppercase tracking-widest">Introduce PIN para {targetRole}</p>
-                  <input 
-                    type="password" 
-                    value={pin}
-                    onChange={(e) => setPin(e.target.value)}
-                    placeholder="••••"
-                    className="w-full text-center text-3xl font-black tracking-[0.5em] py-4 bg-slate-50 rounded-2xl border-2 border-slate-100 focus:border-indigo-500 outline-none transition-all"
-                    maxLength={4}
-                    autoFocus
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <button 
-                    onClick={() => setTargetRole(null)}
-                    className="py-4 bg-slate-100 text-slate-600 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-slate-200 transition-all"
-                  >
-                    Volver
-                  </button>
-                  <button 
-                    onClick={handleSwitch}
-                    className="py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-slate-800 transition-all shadow-lg"
-                  >
-                    Confirmar
-                  </button>
-                </div>
-              </div>
-            )}
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <div className="w-full max-w-sm space-y-8 animate-in fade-in zoom-in-95 duration-500">
+        <div className="text-center space-y-2">
+          <div className="w-20 h-20 bg-slate-900 text-white rounded-[2.5rem] flex items-center justify-center mx-auto shadow-2xl mb-6">
+            <Key size={40} />
+          </div>
+          <h1 className="text-3xl font-black tracking-tight text-slate-900">Introduce tu PIN</h1>
+          <p className="text-slate-500 font-medium">
+            Hola, <span className="font-bold text-slate-700">{employee?.nombre}</span>
+          </p>
+          <div className="inline-flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-full text-xs font-bold text-slate-600 uppercase tracking-widest">
+            {rolIcon}
+            {employee?.rol}
           </div>
         </div>
-      )}
+
+        {pinError && (
+          <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-2xl text-sm font-medium text-center">
+            {pinError}
+          </div>
+        )}
+
+        <div className="space-y-4">
+          <input
+            type="password"
+            value={pin}
+            onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            onKeyDown={handleKeyDown}
+            placeholder="••••"
+            className="w-full text-center text-4xl font-black tracking-[0.75em] py-5 bg-white border-2 border-slate-200 rounded-2xl focus:border-emerald-500 outline-none transition-all"
+            maxLength={4}
+            autoFocus
+            inputMode="numeric"
+          />
+          <button
+            onClick={handleVerify}
+            disabled={checking || pin.length !== 4}
+            className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-sm hover:bg-slate-800 transition-all shadow-lg disabled:opacity-40"
+          >
+            {checking ? 'Verificando...' : 'Confirmar'}
+          </button>
+          <button
+            onClick={logout}
+            className="w-full text-slate-400 text-sm font-medium hover:text-slate-600 transition-colors"
+          >
+            Cambiar de cuenta
+          </button>
+        </div>
+
+        <p className="text-center text-xs text-slate-400">
+          Intentos restantes: {intentosRestantes}
+        </p>
+      </div>
     </div>
   );
 }
 
+// ---- Guard de ruta por rol ----
+function RoleGuard({ path, children }: { path: string; children: React.ReactNode }) {
+  const { rol } = usePin();
+  if (!rol) return <Navigate to="/" replace />;
+  if (!hasAccess(rol, path)) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
+// ---- Contenido principal de la app ----
 function AppContent() {
-  const { user, loading } = useFirebase();
+  const { session, employee, loading } = useSupabase();
+  const { pinVerificado } = usePin();
   const { data, onSave } = useAppData();
-  const { role } = useRole();
 
   if (loading) {
     return (
@@ -221,35 +248,79 @@ function AppContent() {
     );
   }
 
-  if (!user) {
-    return <LoginScreen />;
-  }
+  // Paso 1: Sin sesion -> Login
+  if (!session || !employee) return <LoginScreen />;
+
+  // Paso 2: Sesion ok pero PIN no verificado -> PIN
+  if (!pinVerificado) return <PinScreen />;
+
+  // Paso 3: Todo ok -> App
+  const rol = employee.rol;
 
   return (
     <BrowserRouter basename="/raco">
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<DashboardView />} />
-          <Route path="albaranes" element={<ComprasView data={data} onSave={onSave} />} />
-          <Route path="facturas" element={<ComprasView data={data} onSave={onSave} />} />
-          <Route path="compras" element={<ComprasView data={data} onSave={onSave} />} />
-          <Route path="facturacion-clientes" element={<FacturacionClientesView />} />
-          <Route path="cierre-caja" element={<CierreCajaView />} />
-          <Route path="tesoreria" element={<TesoreriaView data={data} onSave={onSave} />} />
-          <Route path="marketing" element={<MarketingView />} />
-          <Route path="escandallos" element={<EscandallosView />} />
-          <Route path="personal" element={<PersonalView />} />
-          <Route path="inventario" element={<StockView />} />
-          <Route path="auditoria" element={<AuditoriaView />} />
-          <Route path="evaluacion-cartas" element={<EvaluacionCartasView />} />
-          <Route path="tramites" element={<TramitesView />} />
-          <Route path="documentos" element={<DocumentosView />} />
-          <Route path="banco" element={<BancoView />} />
-          <Route path="proveedores" element={<ProveedoresView />} />
-          <Route path="menu" element={<MenuView data={data} onSave={onSave} />} />
+
+          {/* Admin: acceso total */}
+          <Route path="albaranes" element={
+            <RoleGuard path="/albaranes"><ComprasView data={data} onSave={onSave} /></RoleGuard>
+          } />
+          <Route path="facturas" element={
+            <RoleGuard path="/facturas"><ComprasView data={data} onSave={onSave} /></RoleGuard>
+          } />
+          <Route path="compras" element={
+            <RoleGuard path="/compras"><ComprasView data={data} onSave={onSave} /></RoleGuard>
+          } />
+          <Route path="facturacion-clientes" element={
+            <RoleGuard path="/facturacion-clientes"><FacturacionClientesView /></RoleGuard>
+          } />
+          <Route path="cierre-caja" element={
+            <RoleGuard path="/cierre-caja"><CierreCajaView /></RoleGuard>
+          } />
+          <Route path="tesoreria" element={
+            <RoleGuard path="/tesoreria"><TesoreriaView data={data} onSave={onSave} /></RoleGuard>
+          } />
+          <Route path="marketing" element={
+            <RoleGuard path="/marketing"><MarketingView /></RoleGuard>
+          } />
+          <Route path="personal" element={
+            <RoleGuard path="/personal"><PersonalView /></RoleGuard>
+          } />
+          <Route path="auditoria" element={
+            <RoleGuard path="/auditoria"><AuditoriaView /></RoleGuard>
+          } />
+          <Route path="tramites" element={
+            <RoleGuard path="/tramites"><TramitesView /></RoleGuard>
+          } />
+          <Route path="documentos" element={
+            <RoleGuard path="/documentos"><DocumentosView /></RoleGuard>
+          } />
+          <Route path="banco" element={
+            <RoleGuard path="/banco"><BancoView /></RoleGuard>
+          } />
+
+          {/* Cocinero + Admin */}
+          <Route path="escandallos" element={
+            <RoleGuard path="/escandallos"><EscandallosView /></RoleGuard>
+          } />
+          <Route path="menu" element={
+            <RoleGuard path="/menu"><MenuView data={data} onSave={onSave} /></RoleGuard>
+          } />
+          <Route path="evaluacion-cartas" element={
+            <RoleGuard path="/evaluacion-cartas"><EvaluacionCartasView /></RoleGuard>
+          } />
+
+          {/* Cocinero + Camarero + Admin */}
+          <Route path="inventario" element={
+            <RoleGuard path="/inventario"><StockView /></RoleGuard>
+          } />
+          <Route path="proveedores" element={
+            <RoleGuard path="/proveedores"><ProveedoresView /></RoleGuard>
+          } />
         </Route>
       </Routes>
-      <RoleSwitcher />
     </BrowserRouter>
   );
 }
@@ -257,11 +328,11 @@ function AppContent() {
 export default function App() {
   return (
     <ErrorBoundary>
-      <FirebaseProvider>
-        <RoleProvider>
+      <SupabaseProvider>
+        <PinProvider>
           <AppContent />
-        </RoleProvider>
-      </FirebaseProvider>
+        </PinProvider>
+      </SupabaseProvider>
     </ErrorBoundary>
   );
 }
