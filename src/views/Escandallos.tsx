@@ -70,7 +70,7 @@ import {
 export default function EscandallosView() {
   const { rol } = usePin();
   const [recipes, setRecipes] = React.useState<Recipe[]>(mockRecipes);
-  const [selectedRecipeId, setSelectedRecipeId] = React.useState<string>(mockRecipes[0].id);
+  const [selectedRecipeId, setSelectedRecipeId] = React.useState<string | null>(mockRecipes[0]?.id ?? null);
   const [activeTab, setActiveTab] = React.useState<'escandallo' | 'analisis' | 'optimizacion' | 'mermas' | 'innovaciones'>('escandallo');
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [isOptimizing, setIsOptimizing] = React.useState(false);
@@ -101,7 +101,7 @@ export default function EscandallosView() {
     cost: 0
   });
   
-  const selectedRecipe = recipes.find(r => r.id === selectedRecipeId) || recipes[0];
+  const selectedRecipe = recipes.find(r => r.id === selectedRecipeId);
 
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
@@ -236,7 +236,7 @@ export default function EscandallosView() {
         - marketTrend: string (tendencia macro del sector restauración)`;
       } else if (selectedRecipe?.name === 'Spider Tartar de Atún') {
         prompt = `Realiza un análisis profundo y crítico del plato 'Spider Tartar de Atún'.
-        Ingredientes actuales: ${JSON.stringify(selectedRecipe.ingredients)}
+        Ingredientes actuales: ${JSON.stringify(selectedRecipe?.ingredients)}
         Coste Laboral: ${selectedRecipe.laborCost}€
         Margen: ${selectedRecipe.margin}%
         
@@ -253,7 +253,7 @@ export default function EscandallosView() {
       } else {
         prompt = `Analiza este escandallo de cocina y sugiere mejoras para reducir costes, optimizar mermas y maximizar el margen de beneficio.
         Receta: ${selectedRecipe.name}
-        Ingredientes: ${JSON.stringify(selectedRecipe.ingredients)}
+        Ingredientes: ${JSON.stringify(selectedRecipe?.ingredients)}
         Margen actual: ${selectedRecipe.margin}%
         Coste actual: ${calculateTotalCost(selectedRecipe)}€
         
@@ -632,7 +632,7 @@ export default function EscandallosView() {
                       </thead>
                       <tbody className="divide-y divide-slate-50">
                         <AnimatePresence>
-                          {selectedRecipe.ingredients.map((ing, index) => {
+                          {(selectedRecipe?.ingredients ?? []).map((ing, index) => {
                             const gross = ing.quantity / (1 - ing.wastePercentage / 100);
                             const cost = gross * ing.pricePerUnit;
                             return (
@@ -655,7 +655,7 @@ export default function EscandallosView() {
                                           className="text-sm font-black text-slate-700 bg-transparent border-b border-slate-200 focus:border-emerald-500 outline-none"
                                           value={ing.name}
                                           onChange={(e) => {
-                                            const updated = [...selectedRecipe.ingredients];
+                                            const updated = [...(selectedRecipe?.ingredients ?? [])];
                                             updated[index] = { ...updated[index], name: e.target.value };
                                             handleUpdateRecipeIngredients(updated);
                                           }}
@@ -675,7 +675,7 @@ export default function EscandallosView() {
                                         className="w-16 text-center bg-transparent border-b border-slate-200 focus:border-emerald-500 outline-none"
                                         value={ing.quantity}
                                         onChange={(e) => {
-                                          const updated = [...selectedRecipe.ingredients];
+                                          const updated = [...(selectedRecipe?.ingredients ?? [])];
                                           updated[index] = { ...updated[index], quantity: parseFloat(e.target.value) || 0 };
                                           handleUpdateRecipeIngredients(updated);
                                         }}
@@ -693,7 +693,7 @@ export default function EscandallosView() {
                                       className="w-12 text-center bg-transparent border-b border-slate-200 focus:border-emerald-500 outline-none"
                                       value={ing.wastePercentage}
                                       onChange={(e) => {
-                                        const updated = [...selectedRecipe.ingredients];
+                                        const updated = [...(selectedRecipe?.ingredients ?? [])];
                                         updated[index] = { ...updated[index], wastePercentage: parseFloat(e.target.value) || 0 };
                                         handleUpdateRecipeIngredients(updated);
                                       }}
@@ -718,7 +718,7 @@ export default function EscandallosView() {
                                   <td className="px-6 py-6 text-center">
                                     <button 
                                       onClick={() => {
-                                        const updated = selectedRecipe.ingredients.filter((_, i) => i !== index);
+                                        const updated = selectedRecipe?.ingredients.filter((_, i) => i !== index);
                                         handleUpdateRecipeIngredients(updated);
                                       }}
                                       className="p-2 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
@@ -744,7 +744,7 @@ export default function EscandallosView() {
                                     pricePerUnit: 1,
                                     wastePercentage: 0
                                   };
-                                  handleUpdateRecipeIngredients([...selectedRecipe.ingredients, newIng]);
+                                  handleUpdateRecipeIngredients([...selectedRecipe?.ingredients, newIng]);
                                 }}
                                 className="w-full py-3 border-2 border-dashed border-slate-200 rounded-2xl text-[10px] font-black uppercase tracking-widest text-slate-400 hover:border-emerald-500 hover:text-emerald-600 transition-all flex items-center justify-center gap-2"
                               >
@@ -837,7 +837,8 @@ export default function EscandallosView() {
                   <div className="w-24 h-24 bg-slate-50 rounded-[2rem] flex items-center justify-center text-slate-200 mb-6">
                     <ChefHat size={48} />
                   </div>
-                  <h3 className="text-xl font-black text-slate-400 uppercase tracking-[0.2em]">Selecciona una receta</h3>
+                  <h3 className="text-xl font-black text-slate-400 uppercase tracking-[0.2em]">Selecciona una receta para ver su escandallo</h3>
+                  <p className="text-sm text-slate-400 mt-2 font-medium">Elige una receta de la lista para ver sus ingredientes, costes y análisis de rentabilidad</p>
                 </div>
               )}
             </div>
@@ -1104,7 +1105,7 @@ export default function EscandallosView() {
                     Perfil de Optimización
                   </h4>
                   <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" style={{ minHeight: 300 }}>
                       <RadarChart cx="50%" cy="50%" outerRadius="80%" data={[
                         { subject: 'Coste MP', A: 120, fullMark: 150 },
                         { subject: 'Mermas', A: 98, fullMark: 150 },
@@ -1256,7 +1257,7 @@ export default function EscandallosView() {
                     Motivos de Merma
                   </h4>
                   <div className="h-64">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" style={{ minHeight: 300 }}>
                       <RadarChart cx="50%" cy="50%" outerRadius="80%" data={[
                         { subject: 'Caducidad', A: 45, fullMark: 100 },
                         { subject: 'Deterioro', A: 30, fullMark: 100 },
@@ -1562,7 +1563,7 @@ export default function EscandallosView() {
               </div>
               
               <div className="space-y-4">
-                {selectedRecipe.ingredients.map((ing, i) => (
+                {(selectedRecipe?.ingredients ?? []).map((ing, i) => (
                   <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                     <div>
                       <p className="text-sm font-black text-slate-700">{ing.name}</p>
@@ -1574,7 +1575,7 @@ export default function EscandallosView() {
                         className="w-20 px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-center"
                         value={ing.wastePercentage}
                         onChange={(e) => {
-                          const updated = [...selectedRecipe.ingredients];
+                          const updated = [...(selectedRecipe?.ingredients ?? [])];
                           updated[i] = { ...updated[i], wastePercentage: parseFloat(e.target.value) || 0 };
                           handleUpdateRecipeIngredients(updated);
                         }}
