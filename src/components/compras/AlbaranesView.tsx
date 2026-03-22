@@ -835,3 +835,5 @@ Responde SOLO con JSON válido, sin markdown:
     </div>
   );
 }
+
+export { AlbaranesView };
