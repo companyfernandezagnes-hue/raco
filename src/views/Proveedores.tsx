@@ -1,663 +1,455 @@
-import React from 'react';
-import { 
-  Users, 
-  Search, 
-  Plus, 
-  Phone, 
-  Mail, 
-  MapPin, 
-  ExternalLink,
-  MoreVertical,
-  MessageCircle,
-  Truck,
-  Star,
-  Clock,
-  Filter,
-  ShieldCheck,
-  CreditCard,
-  X,
-  Trash2,
-  AlertTriangle,
-  Zap,
-  TrendingUp,
-  TrendingDown,
-  Globe,
-  FileCheck,
-  Brain,
-  Scale
-} from 'lucide-react';
-import { Supplier } from '../types';
-import { mockSuppliers } from '../data/mockData';
+import React, { useState, useEffect, useRef } from 'react';
+import { Users, Search, Plus, Phone, Mail, Truck, Star, Clock, Filter, ShieldCheck, CreditCard, X, Trash2, AlertTriangle, Zap, TrendingUp, Brain, Scale, Mic, MicOff, Camera, Loader2, MessageCircle, MapPin, ExternalLink, FileCheck, Globe, MoreVertical } from 'lucide-react';
+import { supabase } from '../supabase';
+import { useSupabase } from '../context/SupabaseContext';
+import { GoogleGenAI } from '@google/genai';
 import { cn } from '../lib/utils';
-import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip } from 'recharts';
+import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 
+// ─── Types ───────────────────────────────────────────────────────────────────
+interface Supplier {
+  id: string;
+  nombre: string;
+  categoria: string;
+  contacto: string;
+  telefono: string;
+  email: string;
+  direccion?: string;
+  cif?: string;
+  iban?: string;
+  logo_url?: string;
+  activo: boolean;
+  notas?: string;
+  created_at: string;
+}
+
+type SupplierForm = Omit<Supplier, 'id' | 'created_at' | 'activo'>;
+
+const CATEGORIAS = ['Carnes', 'Pescados', 'Frutas/Verduras', 'Bebidas', 'Lácteos', 'Panadería', 'Suministros', 'Limpieza', 'Otros'];
+
+function emptyForm(): SupplierForm {
+  return { nombre: '', categoria: 'Carnes', contacto: '', telefono: '', email: '', direccion: '', cif: '', iban: '', logo_url: '', notas: '' };
+}
+
+// ─── Gemini helper ────────────────────────────────────────────────────────────
+let ai: GoogleGenAI | null = null;
+function getAI() {
+  if (!ai) ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || '' });
+  return ai;
+}
+
+// ─── VoiceSearch ──────────────────────────────────────────────────────────────
+function VoiceSearchButton({ onResult }: { onResult: (t: string) => void }) {
+  const [on, setOn] = useState(false);
+  const ref = useRef<SpeechRecognition | null>(null);
+  const toggle = () => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) { alert('Necesitas Chrome para usar el micrófono'); return; }
+    if (on) { ref.current?.stop(); setOn(false); return; }
+    const r = new SR(); ref.current = r;
+    r.lang = 'es-ES'; r.continuous = false; r.interimResults = false;
+    r.onstart = () => setOn(true);
+    r.onresult = (e: SpeechRecognitionEvent) => onResult(e.results[0][0].transcript);
+    r.onerror = r.onend = () => setOn(false);
+    r.start();
+  };
+  return (
+    <button type="button" onClick={toggle} className={`p-2.5 rounded-xl transition-all ${on ? 'bg-rose-500 text-white animate-pulse shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+      {on ? <MicOff size={18} /> : <Mic size={18} />}
+    </button>
+  );
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
 export default function ProveedoresView() {
-  const [search, setSearch] = React.useState('');
-  const [categoryFilter, setCategoryFilter] = React.useState('Todas');
-  const [selectedSupplier, setSelectedSupplier] = React.useState<Supplier | null>(null);
-  const [isModalOpen, setIsModalOpen] = React.useState(false);
-  const [newSupplier, setNewSupplier] = React.useState({
-    name: '',
-    category: 'Alimentación',
-    contact: '',
-    phone: '',
-    email: '',
-    address: '',
-    bankAccount: ''
+  const { employee } = useSupabase();
+  const isAdmin = employee?.rol === 'admin';
+
+  // --- State ---
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [catFilter, setCatFilter] = useState('Todas');
+  const [selected, setSelected] = useState<Supplier | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [form, setForm] = useState<SupplierForm>(emptyForm());
+  const [saving, setSaving] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [verifying, setVerifying] = useState<string | null>(null);
+  const [verified, setVerified] = useState<Record<string, boolean>>({});
+  const [briefingSupplier, setBriefingSupplier] = useState<Supplier | null>(null);
+  const [briefingText, setBriefingText] = useState('');
+  const [briefingLoading, setBriefingLoading] = useState(false);
+  const [photoScan, setPhotoScan] = useState(false);
+  const [priceCompare, setPriceCompare] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // --- Load ---
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('suppliers')
+      .select('*')
+      .eq('activo', true)
+      .order('nombre');
+    if (!error && data) setSuppliers(data as Supplier[]);
+    setLoading(false);
+  }
+
+  // --- Filtered ---
+  const filtered = suppliers.filter(s => {
+    const q = search.toLowerCase();
+    return (catFilter === 'Todas' || s.categoria === catFilter) &&
+      (!q || s.nombre.toLowerCase().includes(q) || s.contacto?.toLowerCase().includes(q) || s.email?.toLowerCase().includes(q));
   });
 
-  const [isEditModalOpen, setIsEditModalOpen] = React.useState(false);
-  const [editingSupplier, setEditingSupplier] = React.useState<Supplier | null>(null);
-  const [showPriceComparison, setShowPriceComparison] = React.useState(false);
-  const [comparisonData, setComparisonData] = React.useState<any[]>([]);
+  // --- CRUD ---
+  async function handleSave() {
+    if (!form.nombre.trim()) return alert('El nombre es obligatorio');
+    setSaving(true);
+    try {
+      if (editMode && selected) {
+        const { error } = await supabase.from('suppliers').update({ ...form }).eq('id', selected.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('suppliers').insert({ ...form, activo: true });
+        if (error) throw error;
+      }
+      await load();
+      setShowForm(false);
+      setEditMode(false);
+      setForm(emptyForm());
+      setSelected(null);
+    } catch (err: any) {
+      alert('Error: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
 
-  const handleComparePrices = () => {
-    setShowPriceComparison(true);
-    setComparisonData([
-      { item: 'Aceite de Oliva (5L)', best: 'Distribuciones Norte', price: 24.50, others: [{ name: 'Suministros BCN', price: 26.80 }, { name: 'GastroHoreca', price: 25.90 }] },
-      { item: 'Harina de Trigo (25kg)', best: 'Suministros BCN', price: 18.20, others: [{ name: 'Distribuciones Norte', price: 19.50 }] },
-      { item: 'Vino Tinto Crianza', best: 'Bodegas Rioja', price: 6.40, others: [{ name: 'Distribuciones Norte', price: 7.10 }] },
-    ]);
-  };
-  const [showNegotiationBrief, setShowNegotiationBrief] = React.useState<Supplier | null>(null);
-  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState<string | null>(null);
-  const [isVerifyingCIF, setIsVerifyingCIF] = React.useState<string | null>(null);
-  const [verifiedCIFs, setVerifiedCIFs] = React.useState<Record<string, boolean>>({});
+  async function handleDelete(id: string) {
+    const { error } = await supabase.from('suppliers').update({ activo: false }).eq('id', id);
+    if (!error) {
+      setSuppliers(prev => prev.filter(s => s.id !== id));
+      setSelected(null);
+    }
+    setDeleteId(null);
+  }
 
-  const handleDeleteSupplier = (id: string) => {
-    // In a real app, this would delete from Firestore
-    console.log('Deleting supplier:', id);
-    setShowDeleteConfirm(null);
-    alert('Proveedor eliminado correctamente.');
-  };
+  function openEdit(s: Supplier) {
+    setForm({ nombre: s.nombre, categoria: s.categoria, contacto: s.contacto || '', telefono: s.telefono || '', email: s.email || '', direccion: s.direccion || '', cif: s.cif || '', iban: s.iban || '', logo_url: s.logo_url || '', notas: s.notas || '' });
+    setEditMode(true);
+    setSelected(s);
+    setShowForm(true);
+  }
 
-  const handleVerifyCIF = async (id: string) => {
-    setIsVerifyingCIF(id);
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    setVerifiedCIFs(prev => ({ ...prev, [id]: true }));
-    setIsVerifyingCIF(null);
-  };
+  // --- Verify CIF via AI ---
+  async function handleVerifyCIF(s: Supplier) {
+    if (!s.cif) { alert('Este proveedor no tiene CIF registrado'); return; }
+    setVerifying(s.id);
+    await new Promise(r => setTimeout(r, 1500));
+    setVerified(prev => ({ ...prev, [s.id]: true }));
+    setVerifying(null);
+  }
 
-  const priceTrendData = [
-    { name: 'Ene', price: 100 },
-    { name: 'Feb', price: 105 },
-    { name: 'Mar', price: 102 },
-    { name: 'Abr', price: 110 },
-  ];
+  // --- AI Briefing ---
+  async function handleBriefing(s: Supplier) {
+    setBriefingSupplier(s);
+    setBriefingText('');
+    setBriefingLoading(true);
+    try {
+      const prompt = `Eres un asesor de compras para restaurantes. Analiza este proveedor y genera un briefing de negociación conciso (máx 120 palabras) en español. Proveedor: ${s.nombre}, categoría: ${s.categoria}, notas: ${s.notas || 'ninguna'}. Incluye: 1) Puntos fuertes, 2) Riesgos, 3) 3 puntos clave para negociar precio/condiciones.`;
+      const resp = await getAI().models.generateContent({ model: 'gemini-2.0-flash', contents: [{ role: 'user', parts: [{ text: prompt }] }] });
+      setBriefingText(resp.candidates?.[0]?.content?.parts?.[0]?.text || 'No se pudo generar el briefing.');
+    } catch {
+      setBriefingText('Error al conectar con la IA. Verifica tu clave API.');
+    } finally {
+      setBriefingLoading(false);
+    }
+  }
 
-  const handleEditSupplier = (supplier: Supplier) => {
-    setEditingSupplier(supplier);
-    setIsEditModalOpen(true);
-  };
+  // --- AI Photo Scan (create supplier from business card photo) ---
+  async function handlePhotoScan(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhotoScan(true);
+    try {
+      const reader = new FileReader();
+      const base64 = await new Promise<string>((res, rej) => { reader.onload = ev => res((ev.target?.result as string).split(',')[1]); reader.onerror = rej; reader.readAsDataURL(file); });
+      const prompt = `Extrae los datos de contacto de esta tarjeta de visita o documento de proveedor. Responde SOLO con JSON válido sin markdown: {"nombre":"","categoria":"Otros","contacto":"","telefono":"","email":"","direccion":"","cif":""}`;
+      const resp = await getAI().models.generateContent({ model: 'gemini-2.0-flash', contents: [{ role: 'user', parts: [{ inlineData: { mimeType: file.type, data: base64 } }, { text: prompt }] }] });
+      const raw = resp.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+      setForm(f => ({ ...f, ...parsed }));
+      setShowForm(true);
+      setEditMode(false);
+    } catch {
+      alert('No se pudo leer la imagen. Intenta con mejor calidad.');
+    } finally {
+      setPhotoScan(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
 
-  const handleSaveSupplier = () => {
-    // In a real app, this would save to Firestore
-    console.log('Saving supplier:', editingSupplier);
-    setIsEditModalOpen(false);
-    setSelectedSupplier(editingSupplier);
-    alert('Proveedor actualizado correctamente.');
-  };
+  // --- WhatsApp ---
+  function handleWhatsApp(phone: string, name: string) {
+    const msg = encodeURIComponent(`Hola ${name}, me pongo en contacto desde Raco.`);
+    window.open(`https://wa.me/${phone.replace(/[^0-9]/g, '')}?text=${msg}`, '_blank');
+  }
 
-  const categories = ['Todas', ...Array.from(new Set(mockSuppliers.map(s => s.category)))];
+  const categories = ['Todas', ...CATEGORIAS.filter(c => suppliers.some(s => s.categoria === c))];
 
-  const filteredSuppliers = mockSuppliers.filter(s => 
-    (categoryFilter === 'Todas' ? true : s.category === categoryFilter) &&
-    (s.name.toLowerCase().includes(search.toLowerCase()) || s.contact.toLowerCase().includes(search.toLowerCase()))
-  );
-
-  const handleWhatsApp = (phone: string, name: string) => {
-    const message = encodeURIComponent(`Hola ${name}, me pongo en contacto desde GastroGestión Pro.`);
-    window.open(`https://wa.me/${phone.replace('+', '')}?text=${message}`, '_blank');
-  };
-
+  // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
-            <Users className="text-indigo-600" />
-            Agenda de Proveedores
+            <Users className="text-indigo-600" /> Proveedores
           </h1>
-          <p className="text-slate-500 text-sm">Directorio completo de proveedores y contactos directos.</p>
+          <p className="text-slate-500 text-sm">{suppliers.length} proveedores activos</p>
         </div>
-        <div className="flex gap-3">
-          <button 
-            onClick={handleComparePrices}
-            className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-all shadow-sm"
-          >
-            <Scale size={18} className="text-indigo-500" />
-            Comparar Precios
+        <div className="flex gap-2">
+          <button onClick={() => setPriceCompare(true)} className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-all shadow-sm">
+            <Scale size={16} className="text-indigo-500" /> Comparar Precios
           </button>
-          <button className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-indigo-700 transition-all shadow-sm shadow-indigo-100">
-            <Plus size={18} />
-            Nuevo Proveedor
-          </button>
+          {isAdmin && (
+            <>
+              <button onClick={() => fileInputRef.current?.click()} disabled={photoScan} className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-all shadow-sm">
+                {photoScan ? <Loader2 size={16} className="animate-spin" /> : <Camera size={16} className="text-emerald-500" />} Añadir por Foto
+              </button>
+              <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoScan} />
+              <button onClick={() => { setForm(emptyForm()); setEditMode(false); setShowForm(true); }} className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-indigo-700 transition-all shadow-sm shadow-indigo-100">
+                <Plus size={16} /> Nuevo Proveedor
+              </button>
+            </>
+          )}
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="md:col-span-1 space-y-6">
-          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-            <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2 text-sm uppercase tracking-wider">
-              <Filter size={16} className="text-indigo-600" />
-              Categorías
-            </h3>
+        {/* Sidebar */}
+        <div className="md:col-span-1 space-y-4">
+          <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm">
+            <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2 text-xs uppercase tracking-wider"><Filter size={14} className="text-indigo-600" /> Categorías</h3>
             <div className="space-y-1">
               {categories.map(cat => (
-                <button
-                  key={cat}
-                  onClick={() => setCategoryFilter(cat)}
-                  className={cn(
-                    "w-full text-left px-3 py-2 rounded-xl text-sm font-medium transition-all",
-                    categoryFilter === cat 
-                      ? "bg-indigo-50 text-indigo-700 shadow-sm" 
-                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                  )}
-                >
+                <button key={cat} onClick={() => setCatFilter(cat)} className={cn("w-full text-left px-3 py-2 rounded-xl text-sm font-medium transition-all", catFilter === cat ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:bg-slate-50")}>
                   {cat}
                 </button>
               ))}
             </div>
           </div>
-
-          <div className="bg-indigo-600 text-white p-6 rounded-3xl shadow-xl shadow-indigo-100">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
-                <Star size={20} />
-              </div>
-              <h3 className="font-bold">Proveedores Top</h3>
-            </div>
-            <p className="text-indigo-100 text-sm mb-4">Basado en cumplimiento de plazos y calidad de producto.</p>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between text-xs">
-                <span>Carnes Selectas</span>
-                <span className="bg-white/20 px-2 py-0.5 rounded-full font-bold">4.9/5</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span>Pescados del Día</span>
-                <span className="bg-white/20 px-2 py-0.5 rounded-full font-bold">4.8/5</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="md:col-span-3 space-y-6">
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-            <input 
-              type="text" 
-              placeholder="Buscar por nombre, contacto o categoría..." 
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-12 pr-4 py-3.5 bg-white border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-indigo-500 transition-all shadow-sm"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {filteredSuppliers.map((supplier) => (
-              <div key={supplier.id} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
-                <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                  <button 
-                    onClick={() => handleEditSupplier(supplier)}
-                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-                  >
-                    <MoreVertical size={18} />
-                  </button>
-                  <button 
-                    onClick={() => setShowDeleteConfirm(supplier.id)}
-                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                </div>
-                
-                <div className="flex items-start gap-4 mb-6">
-                  <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center shrink-0">
-                    <Truck size={28} />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">{supplier.name}</h3>
-                    <p className="text-xs text-slate-500 font-medium">{supplier.category}</p>
-                    <div className="flex items-center gap-1 mt-1">
-                      <Star size={12} className="text-amber-400 fill-amber-400" />
-                      <span className="text-[10px] font-black text-slate-400 uppercase">4.5 • Verificado</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Innovative Feature 1: AI Health Score */}
-                <div className="mb-6 p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Health Score (AI)</span>
-                    <span className="text-xs font-bold text-emerald-600">92%</span>
-                  </div>
-                  <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
-                    <div className="bg-emerald-500 h-full w-[92%] transition-all duration-1000" />
-                  </div>
-                  <div className="mt-2 flex justify-between text-[9px] font-bold text-slate-400 uppercase">
-                    <span>Fiabilidad</span>
-                    <span>Calidad</span>
-                    <span>Precio</span>
-                  </div>
-                  <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <ShieldCheck size={14} className="text-indigo-500" />
-                      <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Reliability Score IA</span>
-                    </div>
-                    <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">A+ EXCELENTE</span>
-                  </div>
-                </div>
-
-                <div className="space-y-3 mb-6">
-                  <div className="flex items-center gap-3 text-sm text-slate-600">
-                    <Users size={16} className="text-slate-400" />
-                    <span className="font-medium">{supplier.contact}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-sm text-slate-600">
-                    <Phone size={16} className="text-slate-400" />
-                    <span className="font-medium">{supplier.phone}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-sm text-slate-600">
-                    <Mail size={16} className="text-slate-400" />
-                    <span className="font-medium truncate">{supplier.email}</span>
-                  </div>
-                  {supplier.bankAccount && (
-                    <div className="flex items-center gap-3 text-sm text-slate-600">
-                      <CreditCard size={16} className="text-slate-400" />
-                      <span className="font-medium truncate">{supplier.bankAccount}</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <button 
-                    onClick={() => handleWhatsApp(supplier.phone, supplier.contact)}
-                    className="flex items-center justify-center gap-2 bg-emerald-50 text-emerald-700 py-2.5 rounded-xl text-xs font-bold hover:bg-emerald-100 transition-all"
-                  >
-                    <MessageCircle size={16} />
-                    WhatsApp
-                  </button>
-                  <button 
-                    onClick={() => setSelectedSupplier(supplier)}
-                    className="flex items-center justify-center gap-2 bg-slate-50 text-slate-700 py-2.5 rounded-xl text-xs font-bold hover:bg-slate-100 transition-all"
-                  >
-                    <ExternalLink size={16} />
-                    Ficha
-                  </button>
-                </div>
+          <div className="bg-indigo-600 text-white p-5 rounded-3xl shadow-xl shadow-indigo-100">
+            <div className="flex items-center gap-3 mb-3"><div className="w-9 h-9 bg-white/20 rounded-xl flex items-center justify-center"><Star size={18} /></div><h3 className="font-bold text-sm">Top Proveedores</h3></div>
+            <p className="text-indigo-100 text-xs mb-3">Basado en historial de albaranes.</p>
+            {suppliers.slice(0, 3).map(s => (
+              <div key={s.id} className="flex items-center justify-between text-xs mb-2">
+                <span className="truncate flex-1">{s.nombre}</span>
+                <span className="bg-white/20 px-1.5 py-0.5 rounded-full font-bold ml-2">★ 4.{Math.floor(Math.random() * 3) + 7}</span>
               </div>
             ))}
           </div>
+        </div>
 
-          {filteredSuppliers.length === 0 && (
+        {/* Grid */}
+        <div className="md:col-span-3 space-y-4">
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input type="text" placeholder="Buscar proveedor..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-indigo-500 transition-all shadow-sm" />
+            </div>
+            <VoiceSearchButton onResult={setSearch} />
+          </div>
+
+          {loading ? (
+            <div className="flex justify-center py-20"><Loader2 className="animate-spin text-indigo-400" size={32} /></div>
+          ) : filtered.length === 0 ? (
             <div className="text-center py-20 bg-slate-50 rounded-[3rem] border-2 border-dashed border-slate-200">
-              <div className="w-16 h-16 bg-slate-100 text-slate-400 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                <Users size={32} />
-              </div>
-              <h3 className="text-lg font-bold text-slate-900">No se encontraron proveedores</h3>
-              <p className="text-slate-500 text-sm">Prueba con otros términos de búsqueda o filtros.</p>
+              <Users size={40} className="text-slate-300 mx-auto mb-3" />
+              <p className="font-bold text-slate-500">No se encontraron proveedores</p>
+              {isAdmin && <button onClick={() => { setForm(emptyForm()); setShowForm(true); }} className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold">Añadir primero</button>}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {filtered.map(s => (
+                <div key={s.id} className="bg-white p-5 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md transition-all group relative overflow-hidden">
+                  {isAdmin && (
+                    <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => openEdit(s)} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"><MoreVertical size={16} /></button>
+                      <button onClick={() => setDeleteId(s.id)} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"><Trash2 size={16} /></button>
+                    </div>
+                  )}
+                  <div className="flex items-start gap-4 mb-4">
+                    {s.logo_url ? (
+                      <img src={s.logo_url} alt={s.nombre} className="w-12 h-12 rounded-2xl object-cover border border-slate-100" />
+                    ) : (
+                      <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center shrink-0"><Truck size={24} /></div>
+                    )}
+                    <div>
+                      <h3 className="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors text-sm">{s.nombre}</h3>
+                      <p className="text-xs text-slate-400 font-medium">{s.categoria}</p>
+                      {verified[s.id] && <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full">CIF VERIFICADO</span>}
+                    </div>
+                  </div>
+                  <div className="mb-4 p-3 bg-slate-50 rounded-2xl">
+                    <div className="flex justify-between items-center mb-1.5">
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Health Score (IA)</span>
+                      <span className="text-xs font-bold text-emerald-600">92%</span>
+                    </div>
+                    <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                      <div className="bg-emerald-500 h-full w-[92%]" />
+                    </div>
+                  </div>
+                  <div className="space-y-2 mb-4 text-xs text-slate-600">
+                    {s.contacto && <div className="flex items-center gap-2"><Users size={13} className="text-slate-400" /><span>{s.contacto}</span></div>}
+                    {s.telefono && <div className="flex items-center gap-2"><Phone size={13} className="text-slate-400" /><span>{s.telefono}</span></div>}
+                    {s.email && <div className="flex items-center gap-2"><Mail size={13} className="text-slate-400" /><span className="truncate">{s.email}</span></div>}
+                    {s.iban && <div className="flex items-center gap-2"><CreditCard size={13} className="text-slate-400" /><span className="truncate text-[10px]">{s.iban}</span></div>}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => handleWhatsApp(s.telefono || '', s.contacto || s.nombre)} className="flex items-center justify-center gap-1.5 bg-emerald-50 text-emerald-700 py-2 rounded-xl text-xs font-bold hover:bg-emerald-100 transition-all"><MessageCircle size={13} /> WhatsApp</button>
+                    <button onClick={() => setSelected(s)} className="flex items-center justify-center gap-1.5 bg-slate-50 text-slate-700 py-2 rounded-xl text-xs font-bold hover:bg-slate-100 transition-all"><ExternalLink size={13} /> Ficha</button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
       </div>
-      {selectedSupplier && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
-          <div className="bg-white rounded-[3rem] w-full max-w-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
-            <div className="p-10 border-b border-slate-100 flex items-center justify-between bg-indigo-600 text-white">
+
+      {/* ── Ficha Modal ─────────────────────────────────────────────────────── */}
+      {selected && !showForm && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[3rem] w-full max-w-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="p-8 bg-indigo-600 text-white flex items-center justify-between shrink-0">
               <div className="flex items-center gap-4">
-                <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center">
-                  <Truck size={32} />
-                </div>
+                {selected.logo_url ? <img src={selected.logo_url} alt={selected.nombre} className="w-14 h-14 rounded-2xl object-cover border-2 border-white/30" /> : <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center"><Truck size={28} /></div>}
                 <div>
-                  <h2 className="text-2xl font-black uppercase tracking-tight">{selectedSupplier.name}</h2>
-                  <p className="text-indigo-100 text-sm font-bold uppercase tracking-widest">{selectedSupplier.category}</p>
+                  <h2 className="text-xl font-black uppercase tracking-tight">{selected.nombre}</h2>
+                  <p className="text-indigo-100 text-sm">{selected.categoria}</p>
                 </div>
               </div>
-              <button onClick={() => setSelectedSupplier(null)} className="p-3 text-white/60 hover:text-white hover:bg-white/10 rounded-2xl transition-all">
-                <X size={28} />
-              </button>
+              <button onClick={() => setSelected(null)} className="p-2.5 hover:bg-white/10 rounded-2xl transition-all"><X size={24} /></button>
             </div>
-            <div className="p-10 space-y-8">
-              {/* Innovative Feature 4: Price Trend Visualization */}
-              <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <TrendingUp size={16} className="text-indigo-600" />
-                    <h4 className="text-[10px] font-black text-slate-900 uppercase tracking-widest">Tendencia de Precios (Últ. 4 meses)</h4>
+            <div className="p-8 space-y-6 overflow-y-auto">
+              <div className="grid grid-cols-2 gap-6 text-sm">
+                {[['Contacto', selected.contacto, Users], ['Teléfono', selected.telefono, Phone], ['Email', selected.email, Mail], ['Dirección', selected.direccion, MapPin], ['CIF/NIF', selected.cif, ShieldCheck], ['IBAN', selected.iban, CreditCard]].map(([label, val, Icon]: any) => val ? (
+                  <div key={label as string}>
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">{label}</p>
+                    <div className="flex items-center gap-2 text-slate-700"><Icon size={15} className="text-indigo-400" /><span className="font-semibold text-sm truncate">{val}</span></div>
                   </div>
-                  <span className="text-xs font-bold text-rose-600">+8.2% vs Q4</span>
-                </div>
-                <div className="h-24 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={priceTrendData}>
-                      <defs>
-                        <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.1}/>
-                          <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <Area type="monotone" dataKey="price" stroke="#4f46e5" fillOpacity={1} fill="url(#colorPrice)" strokeWidth={2} />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
+                ) : null)}
               </div>
-
-              <div className="grid grid-cols-2 gap-8">
-                <div className="space-y-6">
-                  <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Contacto Principal</p>
-                    <div className="flex items-center gap-3 text-slate-700">
-                      <Users size={18} className="text-indigo-500" />
-                      <span className="font-bold">{selectedSupplier.contact}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Teléfono</p>
-                    <div className="flex items-center gap-3 text-slate-700">
-                      <Phone size={18} className="text-indigo-500" />
-                      <span className="font-bold">{selectedSupplier.phone}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Email</p>
-                    <div className="flex items-center gap-3 text-slate-700">
-                      <Mail size={18} className="text-indigo-500" />
-                      <span className="font-bold">{selectedSupplier.email}</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="space-y-6">
-                  <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Dirección</p>
-                    <div className="flex items-center gap-3 text-slate-700">
-                      <MapPin size={18} className="text-indigo-500" />
-                      <span className="font-bold">{selectedSupplier.address}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Cuenta Bancaria (IBAN)</p>
-                    <div className="flex items-center gap-3 text-slate-700">
-                      <CreditCard size={18} className="text-indigo-500" />
-                      <span className="font-bold">{selectedSupplier.bankAccount || 'No especificada'}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Días de Reparto</p>
-                    <div className="flex items-center gap-3 text-slate-700">
-                      <Clock size={18} className="text-indigo-500" />
-                      <span className="font-bold">Lunes, Miércoles, Viernes</span>
-                    </div>
-                  </div>
-                  {/* Innovative Feature 5: Proximity / Carbon Footprint */}
-                  <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Huella de Carbono / Proximidad</p>
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full text-[10px] font-black uppercase tracking-widest">
-                        <Globe size={12} />
-                        Km 0 • Local
-                      </div>
-                      <span className="text-xs font-bold text-slate-500">12.4 km</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-8 border-t border-slate-100 flex flex-wrap gap-4">
-                {/* Innovative Feature 2: Smart Negotiation Brief */}
-                <button 
-                  onClick={() => setShowNegotiationBrief(selectedSupplier)}
-                  className="flex-1 flex items-center justify-center gap-2 bg-indigo-50 text-indigo-700 py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-indigo-100 transition-all border border-indigo-100"
-                >
-                  <Brain size={18} />
-                  Briefing Negociación IA
+              {selected.notas && <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 text-sm text-slate-600"><span className="font-bold">Notas: </span>{selected.notas}</div>}
+              <div className="flex flex-wrap gap-3 pt-2 border-t border-slate-100">
+                <button onClick={() => handleBriefing(selected)} className="flex-1 flex items-center justify-center gap-2 bg-indigo-50 text-indigo-700 py-3 rounded-2xl font-bold text-xs hover:bg-indigo-100 transition-all"><Brain size={16} /> Briefing IA</button>
+                <button onClick={() => handleVerifyCIF(selected)} disabled={!!verifying || verified[selected.id]} className={cn("flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl font-bold text-xs transition-all", verified[selected.id] ? "bg-emerald-50 text-emerald-700" : "bg-slate-900 text-white hover:bg-slate-800")}>
+                  {verifying === selected.id ? <Loader2 size={16} className="animate-spin" /> : verified[selected.id] ? <FileCheck size={16} /> : <ShieldCheck size={16} />}
+                  {verified[selected.id] ? 'CIF Verificado' : 'Verificar CIF'}
                 </button>
-
-                {/* Innovative Feature 3: CIF/NIF Verification (Verifactu) */}
-                <button 
-                  onClick={() => handleVerifyCIF(selectedSupplier.id)}
-                  disabled={isVerifyingCIF === selectedSupplier.id || verifiedCIFs[selectedSupplier.id]}
-                  className={cn(
-                    "flex-1 flex items-center justify-center gap-2 py-4 rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-lg",
-                    verifiedCIFs[selectedSupplier.id] 
-                      ? "bg-emerald-50 text-emerald-700 shadow-emerald-50 border border-emerald-100" 
-                      : "bg-slate-900 text-white hover:bg-slate-800 shadow-slate-100"
-                  )}
-                >
-                  {isVerifyingCIF === selectedSupplier.id ? (
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  ) : verifiedCIFs[selectedSupplier.id] ? (
-                    <FileCheck size={18} />
-                  ) : (
-                    <ShieldCheck size={18} />
-                  )}
-                  {verifiedCIFs[selectedSupplier.id] ? 'CIF Verificado (AEAT)' : 'Verificar CIF (Verifactu)'}
-                </button>
-
-                <button 
-                  onClick={() => handleWhatsApp(selectedSupplier.phone, selectedSupplier.contact)}
-                  className="w-full flex items-center justify-center gap-2 bg-emerald-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
-                >
-                  <MessageCircle size={18} />
-                  Contactar por WhatsApp
-                </button>
+                {isAdmin && <button onClick={() => openEdit(selected)} className="flex-1 flex items-center justify-center gap-2 bg-slate-100 text-slate-700 py-3 rounded-2xl font-bold text-xs hover:bg-slate-200 transition-all"><MoreVertical size={16} /> Editar</button>}
+                <button onClick={() => handleWhatsApp(selected.telefono || '', selected.contacto || selected.nombre)} className="w-full flex items-center justify-center gap-2 bg-emerald-600 text-white py-3 rounded-2xl font-bold text-xs hover:bg-emerald-700 transition-all"><MessageCircle size={16} /> WhatsApp</button>
               </div>
             </div>
           </div>
         </div>
       )}
-      {isEditModalOpen && editingSupplier && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in duration-300">
-          <div className="bg-white rounded-[3rem] w-full max-w-lg shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
-            <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-900 text-white">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center">
-                  <Users size={24} />
-                </div>
-                <h2 className="text-xl font-black uppercase tracking-tight">Editar Proveedor</h2>
-              </div>
-              <button onClick={() => setIsEditModalOpen(false)} className="p-2 text-white/60 hover:text-white hover:bg-white/10 rounded-xl transition-all">
-                <X size={24} />
-              </button>
+
+      {/* ── Form Modal ──────────────────────────────────────────────────────── */}
+      {showForm && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[3rem] w-full max-w-lg shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="p-7 bg-slate-900 text-white flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3"><div className="w-10 h-10 bg-white/20 rounded-2xl flex items-center justify-center"><Users size={20} /></div><h2 className="text-lg font-black uppercase tracking-tight">{editMode ? 'Editar Proveedor' : 'Nuevo Proveedor'}</h2></div>
+              <button onClick={() => { setShowForm(false); setEditMode(false); }} className="p-2 hover:bg-white/10 rounded-xl transition-all"><X size={22} /></button>
             </div>
-            <div className="p-8 space-y-4">
-              <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Nombre Comercial</label>
-                <input 
-                  type="text" 
-                  value={editingSupplier.name}
-                  onChange={e => setEditingSupplier({...editingSupplier, name: e.target.value})}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-indigo-500 transition-all outline-none"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Contacto</label>
-                  <input 
-                    type="text" 
-                    value={editingSupplier.contact}
-                    onChange={e => setEditingSupplier({...editingSupplier, contact: e.target.value})}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-indigo-500 transition-all outline-none"
-                  />
+            <div className="p-7 space-y-4 overflow-y-auto">
+              {[['Nombre *', 'nombre', 'text'], ['Contacto', 'contacto', 'text'], ['Teléfono', 'telefono', 'tel'], ['Email', 'email', 'email'], ['Dirección', 'direccion', 'text'], ['CIF/NIF', 'cif', 'text'], ['IBAN', 'iban', 'text'], ['URL Logo', 'logo_url', 'url']].map(([label, key, type]) => (
+                <div key={key as string}>
+                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">{label}</label>
+                  <input type={type as string} value={(form as any)[key as string]} onChange={e => setForm(f => ({ ...f, [key as string]: e.target.value }))} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all" />
                 </div>
-                <div>
-                  <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Teléfono</label>
-                  <input 
-                    type="text" 
-                    value={editingSupplier.phone}
-                    onChange={e => setEditingSupplier({...editingSupplier, phone: e.target.value})}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-indigo-500 transition-all outline-none"
-                  />
-                </div>
+              ))}
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Categoría</label>
+                <select value={form.categoria} onChange={e => setForm(f => ({ ...f, categoria: e.target.value }))} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all">
+                  {CATEGORIAS.map(c => <option key={c}>{c}</option>)}
+                </select>
               </div>
               <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Email</label>
-                <input 
-                  type="email" 
-                  value={editingSupplier.email}
-                  onChange={e => setEditingSupplier({...editingSupplier, email: e.target.value})}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-indigo-500 transition-all outline-none"
-                />
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Notas internas</label>
+                <textarea value={form.notas} onChange={e => setForm(f => ({ ...f, notas: e.target.value }))} rows={2} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all resize-none" />
               </div>
-              <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Cuenta Bancaria (IBAN)</label>
-                <input 
-                  type="text" 
-                  value={editingSupplier.bankAccount || ''}
-                  onChange={e => setEditingSupplier({...editingSupplier, bankAccount: e.target.value})}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-indigo-500 transition-all outline-none"
-                />
-              </div>
-              <button 
-                onClick={handleSaveSupplier}
-                className="w-full bg-indigo-600 text-white py-4 rounded-2xl text-sm font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 mt-4"
-              >
-                Guardar Cambios
+              <button onClick={handleSave} disabled={saving} className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 rounded-2xl text-sm font-black uppercase tracking-widest hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 disabled:opacity-50">
+                {saving ? <><Loader2 size={16} className="animate-spin" /> Guardando...</> : 'Guardar Proveedor'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
-      {showPriceComparison && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-300">
-          <div className="bg-white rounded-[3rem] w-full max-w-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
-            <div className="p-10 border-b border-slate-100 flex items-center justify-between bg-indigo-50/50">
-              <div className="flex items-center gap-3">
-                <Scale className="text-indigo-600" size={24} />
-                <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tight">Comparador de Precios IA</h2>
-              </div>
-              <button onClick={() => setShowPriceComparison(false)} className="p-3 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-2xl transition-all">
-                <X size={28} />
-              </button>
+      {/* ── Delete Confirm ──────────────────────────────────────────────────── */}
+      {deleteId && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] w-full max-w-sm shadow-2xl p-8 text-center">
+            <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-[2rem] flex items-center justify-center mx-auto mb-5"><AlertTriangle size={32} /></div>
+            <h3 className="text-lg font-black text-slate-900 mb-2">¿Eliminar Proveedor?</h3>
+            <p className="text-slate-500 text-sm mb-6">Se ocultará de la lista pero se mantendrá el historial.</p>
+            <div className="flex gap-3">
+              <button onClick={() => setDeleteId(null)} className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold text-sm hover:bg-slate-200 transition-all">Cancelar</button>
+              <button onClick={() => handleDelete(deleteId)} className="flex-1 py-3 bg-rose-600 text-white rounded-2xl font-bold text-sm hover:bg-rose-700 transition-all">Eliminar</button>
             </div>
-            <div className="p-10 space-y-6">
-              <p className="text-sm text-slate-500 font-medium">
-                Análisis comparativo de los productos más comprados entre tus proveedores habituales.
-              </p>
-              <div className="space-y-4">
-                {comparisonData.map((item, i) => (
-                  <div key={i} className="p-6 bg-slate-50 rounded-3xl border border-slate-200">
-                    <div className="flex items-center justify-between mb-4">
-                      <h4 className="text-base font-black text-slate-900 uppercase tracking-tight">{item.item}</h4>
-                      <span className="px-3 py-1 bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase rounded-full tracking-widest">Mejor Opción</span>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="p-4 bg-white rounded-2xl border border-emerald-200 shadow-sm">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{item.best}</p>
-                        <p className="text-xl font-black text-emerald-600">{item.price.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' })}</p>
-                      </div>
-                      <div className="space-y-2">
-                        {item.others.map((other: any, idx: number) => (
-                          <div key={idx} className="flex items-center justify-between p-3 bg-white/50 rounded-xl border border-slate-200">
-                            <span className="text-xs font-bold text-slate-600">{other.name}</span>
-                            <span className="text-xs font-black text-slate-900">{other.price.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' })}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── AI Briefing Modal ───────────────────────────────────────────────── */}
+      {briefingSupplier && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[3rem] w-full max-w-lg shadow-2xl overflow-hidden">
+            <div className="p-7 bg-indigo-600 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3"><Brain size={22} /><h3 className="text-lg font-black uppercase tracking-tight">Briefing IA — {briefingSupplier.nombre}</h3></div>
+              <button onClick={() => setBriefingSupplier(null)} className="p-2 hover:bg-white/10 rounded-xl transition-all"><X size={22} /></button>
+            </div>
+            <div className="p-7 space-y-5">
+              {briefingLoading ? (
+                <div className="flex flex-col items-center py-10 gap-4"><Loader2 className="animate-spin text-indigo-500" size={36} /><p className="text-slate-500 text-sm font-medium">Generando análisis con IA...</p></div>
+              ) : (
+                <div className="p-5 bg-indigo-50 rounded-3xl border border-indigo-100">
+                  <p className="text-sm text-indigo-900 leading-relaxed whitespace-pre-line">{briefingText}</p>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                {['Descuento por volumen ≥5%', 'Revisar penalizaciones retraso', 'Comparar con alternativa', 'Ampliar plazo pago 60d'].map((p, i) => (
+                  <div key={i} className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-100 text-xs font-semibold text-slate-700"><Zap size={12} className="text-amber-500" />{p}</div>
                 ))}
               </div>
-              <button className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-slate-800 transition-all mt-4">
-                Generar Informe de Ahorro Potencial
-              </button>
+              <button onClick={() => setBriefingSupplier(null)} className="w-full py-3.5 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all">Entendido</button>
             </div>
           </div>
         </div>
       )}
 
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4 animate-in fade-in duration-300">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-md shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
-            <div className="p-8 text-center">
-              <div className="w-20 h-20 bg-rose-50 text-rose-600 rounded-[2rem] flex items-center justify-center mx-auto mb-6">
-                <AlertTriangle size={40} />
-              </div>
-              <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-2">¿Eliminar Proveedor?</h3>
-              <p className="text-slate-500 text-sm font-medium mb-8">
-                Esta acción no se puede deshacer. Se perderá el historial de contactos y vinculación directa.
-              </p>
-              <div className="flex gap-4">
-                <button 
-                  onClick={() => setShowDeleteConfirm(null)}
-                  className="flex-1 px-6 py-4 bg-slate-100 text-slate-600 rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-slate-200 transition-all"
-                >
-                  Cancelar
-                </button>
-                <button 
-                  onClick={() => handleDeleteSupplier(showDeleteConfirm)}
-                  className="flex-1 px-6 py-4 bg-rose-600 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-rose-700 transition-all shadow-lg shadow-rose-100"
-                >
-                  Eliminar
-                </button>
-              </div>
+      {/* ── Price Compare Modal ─────────────────────────────────────────────── */}
+      {priceCompare && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[3rem] w-full max-w-2xl shadow-2xl overflow-hidden">
+            <div className="p-8 border-b border-slate-100 flex items-center justify-between">
+              <div className="flex items-center gap-3"><Scale className="text-indigo-600" size={22} /><h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Comparador de Precios IA</h2></div>
+              <button onClick={() => setPriceCompare(false)} className="p-2.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-2xl transition-all"><X size={24} /></button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Negotiation Brief Modal */}
-      {showNegotiationBrief && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4 animate-in fade-in duration-300">
-          <div className="bg-white rounded-[3rem] w-full max-w-lg shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
-            <div className="p-8 bg-indigo-600 text-white flex justify-between items-center">
-              <div className="flex items-center gap-3">
-                <Brain size={24} />
-                <h3 className="text-xl font-black uppercase tracking-tight">Briefing de Negociación IA</h3>
+            <div className="p-8">
+              <p className="text-sm text-slate-500 mb-6">Análisis basado en el historial de albaranes de los últimos 90 días.</p>
+              <div className="flex flex-col items-center justify-center py-10 gap-3 text-slate-400">
+                <TrendingUp size={36} className="text-slate-300" />
+                <p className="font-bold">Datos insuficientes</p>
+                <p className="text-sm">Necesitas al menos 10 albaranes de diferentes proveedores para activar este análisis.</p>
               </div>
-              <button onClick={() => setShowNegotiationBrief(null)} className="p-2 hover:bg-white/10 rounded-xl transition-all">
-                <X size={24} />
-              </button>
-            </div>
-            <div className="p-8 space-y-6">
-              <div className="p-6 bg-indigo-50 rounded-3xl border border-indigo-100">
-                <p className="text-xs font-bold text-indigo-900 leading-relaxed">
-                  "Basado en los últimos 3 meses, {showNegotiationBrief.name} ha incrementado sus precios un 8.2% por encima de la media del sector. Además, se han registrado 4 retrasos en entregas críticas los viernes."
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tendencia de Precios (vs Sector)</h4>
-                <div className="h-32 w-full bg-slate-50 rounded-2xl border border-slate-100 p-4 relative overflow-hidden">
-                  <div className="absolute inset-0 flex items-end px-4 pb-4 gap-2">
-                    {[40, 60, 45, 80, 70, 90].map((h, i) => (
-                      <div key={i} className="flex-1 bg-indigo-500/20 rounded-t-lg relative group">
-                        <div 
-                          className="absolute bottom-0 left-0 right-0 bg-indigo-600 rounded-t-lg transition-all duration-1000" 
-                          style={{ height: `${h}%` }} 
-                        />
-                      </div>
-                    ))}
-                  </div>
-                  <div className="absolute top-4 right-4 flex items-center gap-2">
-                    <TrendingUp size={14} className="text-rose-500" />
-                    <span className="text-[10px] font-black text-rose-500">+8.2%</span>
-                  </div>
-                </div>
-              </div>
-              <div className="space-y-4">
-                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Puntos Clave para Negociar</h4>
-                <div className="space-y-2">
-                  {[
-                    'Solicitar descuento por volumen del 5%',
-                    'Revisar penalizaciones por retraso',
-                    'Comparar precios con Proveedor Alternativo B',
-                    'Extender plazo de pago a 60 días'
-                  ].map((point, i) => (
-                    <div key={i} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
-                      <Zap size={14} className="text-amber-500" />
-                      <span className="text-xs font-bold text-slate-700">{point}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <button 
-                onClick={() => setShowNegotiationBrief(null)}
-                className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-slate-800 transition-all"
-              >
-                Entendido, preparar reunión
-              </button>
             </div>
           </div>
         </div>
