@@ -7,8 +7,8 @@ import {
   Building2, Hash,
 } from 'lucide-react';
 import { GoogleGenAI } from '@google/genai';
-import { supabase } from '../supabase';
-import { useSupabase } from '../context/SupabaseContext';
+import { supabase } from '../../supabase';
+import { useSupabase } from '../../context/SupabaseContext';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
