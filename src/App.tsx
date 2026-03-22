@@ -19,7 +19,6 @@ import DashboardView from './views/Dashboard';
 import ProveedoresView from './views/Proveedores';
 import ComprasView from './views/Compras';
 import MenuView from './views/MenuView';
-import { useAppData } from './hooks/useAppData';
 import { SupabaseProvider, useSupabase } from './context/SupabaseContext';
 import { PinProvider, usePin } from './context/PinContext';
 import { EmployeeRol } from './supabase';
@@ -235,8 +234,7 @@ function RoleGuard({ path, children }: { path: string; children: React.ReactNode
 function AppContent() {
   const { session, employee, loading } = useSupabase();
   const { pinVerificado } = usePin();
-  const { data, onSave } = useAppData();
-
+  
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -265,13 +263,13 @@ function AppContent() {
 
           {/* Admin: acceso total */}
           <Route path="albaranes" element={
-            <RoleGuard path="/albaranes"><ComprasView data={data} onSave={onSave} /></RoleGuard>
+            <RoleGuard path="/albaranes"><ComprasView /></RoleGuard>
           } />
           <Route path="facturas" element={
-            <RoleGuard path="/facturas"><ComprasView data={data} onSave={onSave} /></RoleGuard>
+            <RoleGuard path="/facturas"><ComprasView /></RoleGuard>
           } />
           <Route path="compras" element={
-            <RoleGuard path="/compras"><ComprasView data={data} onSave={onSave} /></RoleGuard>
+            <RoleGuard path="/compras"><ComprasView /></RoleGuard>
           } />
           <Route path="facturacion-clientes" element={
             <RoleGuard path="/facturacion-clientes"><FacturacionClientesView /></RoleGuard>
@@ -280,7 +278,7 @@ function AppContent() {
             <RoleGuard path="/cierre-caja"><CierreCajaView /></RoleGuard>
           } />
           <Route path="tesoreria" element={
-            <RoleGuard path="/tesoreria"><TesoreriaView data={data} onSave={onSave} /></RoleGuard>
+            <RoleGuard path="/tesoreria"><TesoreriaView /></RoleGuard>
           } />
           <Route path="marketing" element={
             <RoleGuard path="/marketing"><MarketingView /></RoleGuard>
@@ -306,7 +304,7 @@ function AppContent() {
             <RoleGuard path="/escandallos"><EscandallosView /></RoleGuard>
           } />
           <Route path="menu" element={
-            <RoleGuard path="/menu"><MenuView data={data} onSave={onSave} /></RoleGuard>
+            <RoleGuard path="/menu"><MenuView /></RoleGuard>
           } />
           <Route path="evaluacion-cartas" element={
             <RoleGuard path="/evaluacion-cartas"><EvaluacionCartasView /></RoleGuard>
