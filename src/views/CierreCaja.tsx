@@ -1,381 +1,210 @@
-import React from 'react';
-import { 
-  Calculator, 
-  Wallet, 
-  CreditCard, 
-  Banknote, 
-  AlertCircle, 
-  CheckCircle2, 
-  ArrowRight,
-  RefreshCw,
-  Printer,
-  History,
-  TrendingDown,
-  TrendingUp,
-  Coins,
-  Sparkles
-} from 'lucide-react';
-import { cn, formatCurrency } from '../lib/utils';
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import React, { useState, useEffect } from 'react';
+import { Calculator, Wallet, CreditCard, Banknote, AlertCircle, CheckCircle2, ArrowRight, RefreshCw, Printer, History, TrendingDown, TrendingUp, Coins, Sparkles, Loader2, X, Brain, Mic, MicOff } from 'lucide-react';
+import { supabase } from '../supabase';
+import { useSupabase } from '../context/SupabaseContext';
 
-const CierreCajaView = () => {
-  const [step, setStep] = React.useState<'count' | 'reconcile' | 'summary'>('count');
-  const [cashCount, setCashCount] = React.useState({
-    '500': 0, '200': 0, '100': 0, '50': 0, '20': 0, '10': 0, '5': 0,
-    '2': 0, '1': 0, '0.5': 0, '0.2': 0, '0.1': 0, '0.05': 0, '0.02': 0, '0.01': 0
-  });
+const BILLS = ['500','200','100','50','20','10','5'];
+const COINS = ['2','1','0.5','0.2','0.1','0.05','0.02','0.01'];
+const GEMINI_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+async function callGemini(prompt:string):Promise<string>{
+  const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
+    {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}]})});
+  const json=await res.json();
+  return json.candidates?.[0]?.content?.parts?.[0]?.text??'Sin respuesta';
+}
 
-  const [isFetching, setIsFetching] = React.useState(false);
-  const [softwareData, setSoftwareData] = React.useState({
-    cashSales: 1240.50,
-    cardSales: 2850.20,
-    deliverySales: 450.00,
-    totalSales: 4540.70,
-    expectedCash: 1240.50 + 200.00,
-  });
+export default function CierreCajaView() {
+  const { employee } = useSupabase();
+  const [step, setStep] = useState<'count'|'reconcile'|'summary'>('count');
+  const [cashCount, setCashCount] = useState<Record<string,number>>(
+    [...BILLS,...COINS].reduce((a,v)=>({...a,[v]:0}),{})
+  );
+  const [softwareData, setSoftwareData] = useState({cashSales:0,cardSales:0,deliverySales:0,totalSales:0,expectedCash:0});
+  const [tips, setTips] = useState(0);
+  const [finalFloat, setFinalFloat] = useState(200);
+  const [notes, setNotes] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState<string|null>(null);
+  const [history, setHistory] = useState<any[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
-  const [tips, setTips] = React.useState(0);
-  const [finalFloat, setFinalFloat] = React.useState(200);
-  const [isReconciling, setIsReconciling] = React.useState(false);
-  const [reconciliationStatus, setReconciliationStatus] = React.useState<'pending' | 'success' | 'warning' | 'error'>('pending');
-
-  const historyData = [
-    { date: '08/03', discrepancy: 0.50 },
-    { date: '09/03', discrepancy: -1.20 },
-    { date: '10/03', discrepancy: 0.00 },
-    { date: '11/03', discrepancy: 2.10 },
-    { date: '12/03', discrepancy: -0.40 },
-    { date: '13/03', discrepancy: 0.00 },
-  ];
-
-  const handleFetchData = () => {
-    setIsFetching(true);
-    setTimeout(() => {
-      setSoftwareData({
-        cashSales: 1240.50,
-        cardSales: 2850.20,
-        deliverySales: 450.00,
-        totalSales: 4540.70,
-        expectedCash: 1240.50 + 200.00,
-      });
-      setIsFetching(false);
-    }, 1500);
-  };
-
-  const totalCounted = Object.entries(cashCount).reduce((acc, [val, count]) => acc + (parseFloat(val) * (count as number)), 0);
-  const discrepancy = totalCounted - softwareData.expectedCash;
-
-  const handleFinalizeCierre = () => {
-    setIsReconciling(true);
-    setTimeout(() => {
-      if (Math.abs(discrepancy) < 0.01) {
-        setReconciliationStatus('success');
-      } else if (Math.abs(discrepancy) < 5) {
-        setReconciliationStatus('warning');
-      } else {
-        setReconciliationStatus('error');
-      }
-      setIsReconciling(false);
+  useEffect(()=>{ loadData(); },[]);
+  async function loadData() {
+    setLoading(true);
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      // Cargar ventas del día desde tickets cerrados
+      const {data:tickets} = await supabase.from('tickets').select('total,items').eq('date',today).eq('status','Cerrado');
+      const totalSales = (tickets||[]).reduce((s:number,t:any)=>s+t.total,0);
+      const cashSales = totalSales * 0.35; // Estimado efectivo (sin TPV real integrado)
+      const cardSales = totalSales * 0.65;
+      setSoftwareData({cashSales, cardSales, deliverySales:0, totalSales, expectedCash:cashSales+finalFloat});
+      // Cargar historial de cierres
+      const {data:hist} = await supabase.from('cash_closings').select('*').order('date',{ascending:false}).limit(10);
+      setHistory(hist||[]);
+    } catch(err) { console.error(err); }
+    finally { setLoading(false); }
+  }
+  const countedCash = [...BILLS,...COINS].reduce((s,v)=>s+(parseFloat(v)*cashCount[v]),0);
+  const discrepancy = countedCash - softwareData.expectedCash;
+  async function handleCloseCash() {
+    setSaving(true);
+    try {
+      const {error} = await supabase.from('cash_closings').insert([{
+        date: new Date().toISOString().split('T')[0],
+        cash_sales: softwareData.cashSales,
+        card_sales: softwareData.cardSales,
+        delivery_sales: softwareData.deliverySales,
+        total_sales: softwareData.totalSales,
+        expected_cash: softwareData.expectedCash,
+        counted_cash: countedCash,
+        final_float: finalFloat,
+        tips: tips,
+        notes: notes||null,
+        status: 'closed',
+        closed_by: employee?.nombre||'Sistema',
+        closed_at: new Date().toISOString(),
+      }]);
+      if(error) throw error;
       setStep('summary');
-    }, 2000);
-  };
+      loadData();
+    } catch(err:any) { alert('Error al cerrar caja: '+err.message); }
+    finally { setSaving(false); }
+  }
+  async function handleAIAnalysis() {
+    setAiLoading(true); setAiResult(null);
+    try {
+      const result = await callGemini(`Analiza este cierre de caja de restaurante y da recomendaciones:\nVentas totales: ${softwareData.totalSales.toFixed(2)}€\nEfectivo contado: ${countedCash.toFixed(2)}€\nDiferencia: ${discrepancy.toFixed(2)}€\nPropinas: ${tips}€\nDa 3 sugerencias en español.`);
+      setAiResult(result);
+    } catch(err:any) { setAiResult('Error IA: '+err.message); }
+    finally { setAiLoading(false); }
+  }
+
+  if(loading) return <div className="flex items-center justify-center h-64"><Loader2 className="animate-spin text-indigo-500" size={40}/><span className="ml-3 text-slate-500">Cargando datos de caja...</span></div>;
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 bg-amber-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-amber-100">
-            <Calculator size={28} />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Cierre de Caja</h1>
-            <p className="text-slate-500 text-sm">Conciliación diaria de ventas y efectivo.</p>
-          </div>
-        </div>
+    <div className="min-h-screen bg-slate-50 p-6 space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div><h1 className="text-3xl font-black text-slate-900 tracking-tight">Cierre de Caja</h1><p className="text-slate-500 text-sm mt-1">Recuento y cuadre del {new Date().toLocaleDateString('es-ES')}</p></div>
         <div className="flex gap-2">
-          <button 
-            onClick={handleFetchData}
-            disabled={isFetching}
-            className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-5 py-3 rounded-2xl text-sm font-bold hover:bg-slate-50 transition-all disabled:opacity-50"
-          >
-            <RefreshCw size={18} className={cn(isFetching && "animate-spin")} />
-            {isFetching ? "Sincronizando..." : "Sincronizar Software"}
-          </button>
-          <button className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-5 py-3 rounded-2xl text-sm font-bold hover:bg-slate-50 transition-all">
-            <History size={18} /> Historial
-          </button>
-          <button className="flex items-center gap-2 bg-slate-900 text-white px-6 py-3 rounded-2xl text-sm font-bold hover:bg-slate-800 transition-all shadow-lg shadow-slate-200">
-            <Printer size={18} /> Imprimir Último
-          </button>
+          <button onClick={()=>setShowHistory(!showHistory)} className="flex items-center gap-2 bg-slate-200 text-slate-700 px-4 py-2 rounded-xl hover:bg-slate-300 text-sm font-medium"><History size={16}/> Historial</button>
+          <button onClick={handleAIAnalysis} disabled={aiLoading} className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-xl hover:bg-indigo-700 text-sm font-medium disabled:opacity-50">{aiLoading?<Loader2 size={16} className="animate-spin"/>:<Brain size={16}/>} Análisis IA</button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-        <div className="lg:col-span-3 flex gap-2 p-1.5 bg-slate-100 rounded-2xl w-fit">
-          {[
-            { id: 'count', label: '1. Recuento Físico', icon: Banknote },
-            { id: 'reconcile', label: '2. Conciliación', icon: RefreshCw },
-            { id: 'summary', label: '3. Resumen Final', icon: CheckCircle2 },
-          ].map((s) => (
-            <button
-              key={s.id}
-              onClick={() => setStep(s.id as any)}
-              className={cn(
-                "flex items-center gap-2 px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                step === s.id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"
-              )}
-            >
-              <s.icon size={14} />
-              {s.label}
-            </button>
-          ))}
-        </div>
-        <div className="bg-white rounded-2xl border border-slate-200 p-2 flex items-center justify-between px-4">
-          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Tendencia Desfase</span>
-          <div className="h-8 w-24">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={historyData}>
-                <Line type="monotone" dataKey="discrepancy" stroke="#f59e0b" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
+      {aiResult&&(
+        <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-5 relative"><button onClick={()=>setAiResult(null)} className="absolute top-3 right-3 text-slate-400 hover:text-slate-600"><X size={16}/></button><div className="flex items-start gap-3"><Brain size={20} className="text-indigo-600 mt-0.5 flex-shrink-0"/><div><p className="font-bold text-indigo-800 mb-2">Análisis IA</p><pre className="text-slate-700 text-sm whitespace-pre-wrap font-sans">{aiResult}</pre></div></div></div>
+      )}
+
+      {showHistory&&(
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+          <h3 className="font-bold text-slate-800 mb-4">Últimos Cierres</h3>
+          <div className="space-y-2">
+            {history.map(h=>(
+              <div key={h.id} className="flex justify-between items-center py-2 border-b border-slate-50 last:border-0 text-sm">
+                <span className="font-medium text-slate-700">{h.date}</span>
+                <span className="text-slate-600">{h.total_sales?.toLocaleString('es-ES',{style:'currency',currency:'EUR'})}</span>
+                <span className={`font-bold ${h.discrepancy>=0?'text-emerald-600':'text-rose-600'}`}>{h.discrepancy>=0?'+':''}{h.discrepancy?.toFixed(2)}€</span>
+                <span className={`text-xs px-2 py-1 rounded-lg ${h.status==='closed'?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-700'}`}>{h.status==='closed'?'Cerrado':'Abierto'}</span>
+              </div>
+            ))}
+            {history.length===0&&<p className="text-center text-slate-400 py-4 text-sm">Sin cierres anteriores</p>}
           </div>
         </div>
-      </div>
+      )}
 
-      {step === 'count' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 bg-white rounded-[3rem] border border-slate-200 shadow-sm p-10">
-            <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight mb-8">Desglose de Efectivo</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-6">
-              {Object.keys(cashCount).reverse().map((val) => (
-                <div key={val} className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">
-                    {parseFloat(val) >= 5 ? `${val} € (Billete)` : `${val} € (Moneda)`}
-                  </label>
-                  <div className="relative">
-                    <input 
-                      type="number" 
-                      min="0"
-                      className="w-full pl-4 pr-12 py-4 bg-slate-50 border-none rounded-2xl text-lg font-black text-slate-900 focus:ring-2 focus:ring-amber-500 transition-all"
-                      value={cashCount[val as keyof typeof cashCount] || ''}
-                      onChange={(e) => setCashCount({...cashCount, [val]: parseInt(e.target.value) || 0})}
-                    />
-                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">uds</span>
+      {/* Paso 1: Recuento */}
+      {step==='count'&&(
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-black text-slate-800 mb-4 flex items-center gap-2"><Banknote size={18} className="text-green-600"/> Billetes</h2>
+            <div className="space-y-3">
+              {BILLS.map(v=>(
+                <div key={v} className="flex items-center justify-between">
+                  <span className="font-bold text-slate-700 w-16">{v}€</span>
+                  <div className="flex items-center gap-3">
+                    <button onClick={()=>setCashCount(prev=>({...prev,[v]:Math.max(0,prev[v]-1)}))} className="w-8 h-8 rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 font-bold text-lg flex items-center justify-center">-</button>
+                    <input type="number" value={cashCount[v]} onChange={e=>setCashCount(prev=>({...prev,[v]:parseInt(e.target.value)||0}))} className="w-16 text-center font-bold text-slate-800 border border-slate-200 rounded-xl py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"/>
+                    <button onClick={()=>setCashCount(prev=>({...prev,[v]:prev[v]+1}))} className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-600 hover:bg-indigo-200 font-bold text-lg flex items-center justify-center">+</button>
+                    <span className="text-sm text-slate-500 w-20 text-right">{(parseFloat(v)*cashCount[v]).toFixed(2)}€</span>
                   </div>
                 </div>
               ))}
             </div>
           </div>
-
-          <div className="space-y-6">
-            <div className="bg-slate-900 text-white p-8 rounded-[3rem] shadow-xl shadow-slate-200 sticky top-8">
-              <h3 className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-8">Total Recuento</h3>
-              <div className="space-y-6">
-                <div className="flex justify-between items-end">
-                  <span className="text-slate-400 text-xs font-bold uppercase">Efectivo Contado</span>
-                  <span className="text-4xl font-black text-amber-400">{totalCounted.toFixed(2)} €</span>
-                </div>
-                <div className="h-px bg-white/10" />
-                <div className="space-y-4">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-400">Esperado (Software)</span>
-                    <span className="font-mono">{softwareData.expectedCash.toFixed(2)} €</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-400">Diferencia</span>
-                    <span className={cn("font-black", discrepancy >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                      {discrepancy >= 0 ? '+' : ''}{discrepancy.toFixed(2)} €
-                    </span>
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-black text-slate-800 mb-4 flex items-center gap-2"><Coins size={18} className="text-yellow-600"/> Monedas</h2>
+            <div className="space-y-3">
+              {COINS.map(v=>(
+                <div key={v} className="flex items-center justify-between">
+                  <span className="font-bold text-slate-700 w-16">{v}€</span>
+                  <div className="flex items-center gap-3">
+                    <button onClick={()=>setCashCount(prev=>({...prev,[v]:Math.max(0,prev[v]-1)}))} className="w-8 h-8 rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 font-bold text-lg flex items-center justify-center">-</button>
+                    <input type="number" value={cashCount[v]} onChange={e=>setCashCount(prev=>({...prev,[v]:parseInt(e.target.value)||0}))} className="w-16 text-center font-bold text-slate-800 border border-slate-200 rounded-xl py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"/>
+                    <button onClick={()=>setCashCount(prev=>({...prev,[v]:prev[v]+1}))} className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-600 hover:bg-indigo-200 font-bold text-lg flex items-center justify-center">+</button>
+                    <span className="text-sm text-slate-500 w-20 text-right">{(parseFloat(v)*cashCount[v]).toFixed(2)}€</span>
                   </div>
                 </div>
-                <button 
-                  onClick={() => setStep('reconcile')}
-                  className="w-full mt-8 bg-amber-500 text-slate-900 py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-amber-400 transition-all flex items-center justify-center gap-2"
-                >
-                  Continuar Conciliación
-                  <ArrowRight size={18} />
-                </button>
-              </div>
+              ))}
             </div>
+            <div className="mt-6 pt-4 border-t border-slate-200">
+              <div className="flex justify-between items-center"><span className="font-black text-slate-700">TOTAL CONTADO</span><span className="text-2xl font-black text-indigo-700">{countedCash.toFixed(2)}€</span></div>
+            </div>
+            <button onClick={()=>setStep('reconcile')} className="w-full mt-4 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 flex items-center justify-center gap-2"><ArrowRight size={16}/> Continuar al Cuadre</button>
           </div>
         </div>
       )}
 
-      {step === 'reconcile' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <div className="bg-white rounded-[3rem] border border-slate-200 shadow-sm p-10 space-y-8">
-            <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">Ventas por Método de Pago</h3>
-            <div className="space-y-4">
-              {[
-                { label: 'Efectivo', value: softwareData.cashSales, icon: Banknote, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-                { label: 'Tarjeta / Datáfono', value: softwareData.cardSales, icon: CreditCard, color: 'text-blue-600', bg: 'bg-blue-50' },
-                { label: 'Delivery (Glovo/Uber)', value: softwareData.deliverySales, icon: RefreshCw, color: 'text-fuchsia-600', bg: 'bg-fuchsia-50' },
-              ].map((item) => (
-                <div key={item.label} className="flex items-center justify-between p-6 bg-slate-50 rounded-[2rem] border border-slate-100">
-                  <div className="flex items-center gap-4">
-                    <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center", item.bg, item.color)}>
-                      <item.icon size={24} />
-                    </div>
-                    <div>
-                      <p className="text-sm font-black text-slate-900">{item.label}</p>
-                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Confirmado por Software</p>
-                    </div>
-                  </div>
-                  <p className="text-xl font-black text-slate-900">{formatCurrency(item.value)}</p>
+      {/* Paso 2: Cuadre */}
+      {step==='reconcile'&&(
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-black text-slate-800 mb-4">Datos del Sistema</h2>
+            <div className="space-y-3">
+              {[{label:'Ventas efectivo',value:softwareData.cashSales},{label:'Ventas tarjeta',value:softwareData.cardSales},{label:'Ventas delivery',value:softwareData.deliverySales},{label:'Total ventas',value:softwareData.totalSales,bold:true},{label:'Efectivo esperado',value:softwareData.expectedCash,highlight:true}].map(item=>(
+                <div key={item.label} className={`flex justify-between items-center py-2 ${item.highlight?'bg-blue-50 px-3 rounded-xl':''}`}>
+                  <span className={`text-sm ${item.bold?'font-black':'font-medium'} text-slate-700`}>{item.label}</span>
+                  <span className={`font-bold ${item.highlight?'text-blue-700':item.bold?'text-slate-800':'text-slate-600'}`}>{item.value.toLocaleString('es-ES',{style:'currency',currency:'EUR'})}</span>
                 </div>
               ))}
             </div>
           </div>
-
-          <div className="bg-white rounded-[3rem] border border-slate-200 shadow-sm p-10 space-y-8">
-            <h3 className="text-xl font-black text-slate-900 uppercase tracking-tight">Ajustes y Observaciones</h3>
-            <div className="space-y-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 block">Propinas Recibidas</label>
-                  <div className="relative">
-                    <input 
-                      type="number" 
-                      className="w-full px-6 py-4 bg-slate-50 border-none rounded-2xl text-lg font-black text-slate-900 focus:ring-2 focus:ring-amber-500 transition-all"
-                      value={tips}
-                      onChange={(e) => setTips(parseFloat(e.target.value) || 0)}
-                    />
-                    <Coins className="absolute right-4 top-1/2 -translate-y-1/2 text-amber-500" size={20} />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 block">Fondo Mañana</label>
-                  <input 
-                    type="number" 
-                    className="w-full px-6 py-4 bg-slate-50 border-none rounded-2xl text-lg font-black text-slate-900 focus:ring-2 focus:ring-amber-500 transition-all"
-                    value={finalFloat}
-                    onChange={(e) => setFinalFloat(parseFloat(e.target.value) || 0)}
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 block">Notas del Cierre</label>
-                <textarea 
-                  className="w-full px-6 py-4 bg-slate-50 border-none rounded-2xl text-sm font-medium text-slate-700 focus:ring-2 focus:ring-amber-500 transition-all h-32 resize-none"
-                  placeholder="Ej: Diferencia de 2€ por error en cambio, propinas no registradas..."
-                />
-              </div>
-              <button 
-                onClick={handleFinalizeCierre}
-                disabled={isReconciling}
-                className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg shadow-slate-200 flex items-center justify-center gap-2"
-              >
-                {isReconciling ? (
-                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <CheckCircle2 size={18} />
-                )}
-                {isReconciling ? "Procesando..." : "Finalizar Cierre de Caja"}
-              </button>
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-black text-slate-800 mb-4">Resultado del Cuadre</h2>
+            <div className={`rounded-2xl p-6 mb-4 ${Math.abs(discrepancy)<0.01?'bg-emerald-50 border border-emerald-200':discrepancy>0?'bg-blue-50 border border-blue-200':'bg-rose-50 border border-rose-200'}`}>
+              <p className="text-sm font-medium text-slate-600 mb-1">Diferencia</p>
+              <p className={`text-3xl font-black ${Math.abs(discrepancy)<0.01?'text-emerald-600':discrepancy>0?'text-blue-600':'text-rose-600'}`}>{discrepancy>=0?'+':''}{discrepancy.toFixed(2)}€</p>
+              <p className="text-xs text-slate-500 mt-1">{Math.abs(discrepancy)<0.01?'✅ Cuadre perfecto':discrepancy>0?'📈 Sobrante':'⚠️ Faltante'}</p>
+            </div>
+            <div className="space-y-3">
+              <div><label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Propinas (€)</label><input type="number" step="0.01" value={tips} onChange={e=>setTips(parseFloat(e.target.value)||0)} className="w-full mt-1 px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"/></div>
+              <div><label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Fondo para mañana (€)</label><input type="number" step="0.01" value={finalFloat} onChange={e=>setFinalFloat(parseFloat(e.target.value)||200)} className="w-full mt-1 px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"/></div>
+              <div><label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Notas</label><textarea value={notes} onChange={e=>setNotes(e.target.value)} className="w-full mt-1 px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-none h-20" placeholder="Observaciones del cierre..."/></div>
+            </div>
+            <div className="flex gap-3 mt-4">
+              <button onClick={()=>setStep('count')} className="flex-1 py-3 border border-slate-200 rounded-xl text-sm font-medium hover:bg-slate-50">Volver</button>
+              <button onClick={handleCloseCash} disabled={saving} className="flex-1 py-3 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 disabled:opacity-50">{saving?<Loader2 size={16} className="animate-spin mx-auto"/>:'Cerrar Caja'}</button>
             </div>
           </div>
         </div>
       )}
 
-      {step === 'summary' && (
-        <div className="max-w-3xl mx-auto bg-white rounded-[3rem] border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-500">
-          <div className="p-12 bg-slate-900 text-white text-center space-y-4">
-            <div className={cn(
-              "w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-xl",
-              reconciliationStatus === 'success' ? "bg-emerald-500 shadow-emerald-500/20" : 
-              reconciliationStatus === 'warning' ? "bg-amber-500 shadow-amber-500/20" : "bg-rose-500 shadow-rose-500/20"
-            )}>
-              {reconciliationStatus === 'success' ? <CheckCircle2 size={40} /> : 
-               reconciliationStatus === 'warning' ? <AlertCircle size={40} /> : <AlertCircle size={40} />}
-            </div>
-            <h2 className="text-3xl font-black uppercase tracking-tight">
-              {reconciliationStatus === 'success' ? 'Cierre Cuadrado' : 
-               reconciliationStatus === 'warning' ? 'Cierre con Desfase' : 'Cierre Incorrecto'}
-            </h2>
-            <p className="text-slate-400 font-medium">Viernes, 13 de Marzo de 2026 - Turno de Noche</p>
+      {/* Resumen final */}
+      {step==='summary'&&(
+        <div className="bg-white rounded-2xl border border-emerald-200 shadow-sm p-8 text-center max-w-lg mx-auto">
+          <CheckCircle2 size={48} className="text-emerald-500 mx-auto mb-4"/>
+          <h2 className="text-2xl font-black text-slate-900 mb-2">¡Caja Cerrada!</h2>
+          <p className="text-slate-500 mb-6">El cierre del día ha sido registrado correctamente en Supabase.</p>
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="bg-slate-50 rounded-xl p-3"><p className="text-xs text-slate-500">Ventas</p><p className="font-black text-slate-800">{softwareData.totalSales.toFixed(2)}€</p></div>
+            <div className="bg-slate-50 rounded-xl p-3"><p className="text-xs text-slate-500">Diferencia</p><p className={`font-black ${discrepancy>=0?'text-emerald-600':'text-rose-600'}`}>{discrepancy>=0?'+':''}{discrepancy.toFixed(2)}€</p></div>
+            <div className="bg-slate-50 rounded-xl p-3"><p className="text-xs text-slate-500">Fondo</p><p className="font-black text-slate-800">{finalFloat.toFixed(2)}€</p></div>
           </div>
-            <div className="p-12 space-y-8">
-            {/* AI Discrepancy Analysis Novelty */}
-            <div className="p-8 bg-indigo-50 rounded-[2rem] border border-indigo-100 space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-200">
-                  <Sparkles size={20} />
-                </div>
-                <div>
-                  <h4 className="text-sm font-black text-slate-900 uppercase tracking-tight">Análisis de Desfase IA</h4>
-                  <p className="text-[10px] text-indigo-600 font-bold uppercase tracking-widest">Detección de Patrones</p>
-                </div>
-              </div>
-              <p className="text-sm text-slate-600 leading-relaxed">
-                {discrepancy === 0 
-                  ? "La IA no detecta anomalías. El patrón de cierre es consistente con el histórico de los últimos 30 días."
-                  : discrepancy < 0 
-                    ? `Se detecta un desfase negativo recurrente los viernes. La IA sugiere revisar el cambio entregado en el turno de tarde o posibles errores en el registro de propinas.`
-                    : `Desfase positivo inusual. La IA detecta que podría haber cobros en efectivo no registrados en el software de TPV.`
-                }
-              </p>
-              <div className="flex gap-2">
-                <span className="px-3 py-1 bg-white rounded-full text-[9px] font-black text-indigo-600 border border-indigo-100 uppercase tracking-widest">Probabilidad Error Humano: 85%</span>
-                <span className="px-3 py-1 bg-white rounded-full text-[9px] font-black text-indigo-600 border border-indigo-100 uppercase tracking-widest">Confianza IA: Alta</span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-8">
-              <div className="space-y-1">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ventas Totales</p>
-                <p className="text-2xl font-black text-slate-900">{formatCurrency(softwareData.totalSales)}</p>
-              </div>
-              <div className="space-y-1 text-right">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Efectivo a Banco</p>
-                <p className="text-2xl font-black text-emerald-600">{formatCurrency(totalCounted - 200)}</p>
-              </div>
-            </div>
-            <div className="p-8 bg-slate-50 rounded-[2rem] border border-slate-100 flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className={cn(
-                  "w-10 h-10 rounded-xl flex items-center justify-center",
-                  discrepancy === 0 ? "bg-emerald-100 text-emerald-600" : "bg-rose-100 text-rose-600"
-                )}>
-                  {discrepancy === 0 ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
-                </div>
-                <div>
-                  <p className="text-sm font-black text-slate-900">Resultado de Conciliación</p>
-                  <p className="text-xs text-slate-500 font-medium">
-                    {discrepancy === 0 ? 'Caja cuadrada perfectamente' : `Desfase de ${discrepancy.toFixed(2)} €`}
-                  </p>
-                </div>
-              </div>
-              <span className={cn(
-                "px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest",
-                discrepancy === 0 ? "bg-emerald-500 text-white" : "bg-rose-500 text-white"
-              )}>
-                {discrepancy === 0 ? 'OK' : 'REVISAR'}
-              </span>
-            </div>
-            <div className="flex gap-4">
-              <button className="flex-1 bg-slate-100 text-slate-700 py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-slate-200 transition-all flex items-center justify-center gap-2">
-                <Printer size={18} />
-                Imprimir
-              </button>
-              <button 
-                onClick={() => alert('Informe de cierre enviado al contable y gerente por email.')}
-                className="flex-1 bg-emerald-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 flex items-center justify-center gap-2"
-              >
-                <RefreshCw size={18} />
-                Enviar a Contable
-              </button>
-            </div>
-            <button 
-              onClick={() => setStep('count')}
-              className="w-full mt-4 bg-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-slate-800 transition-all"
-            >
-              Nuevo Cierre
-            </button>
-          </div>
+          <button onClick={()=>{setStep('count');setCashCount([...BILLS,...COINS].reduce((a,v)=>({...a,[v]:0}),{}));}} className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700">Nuevo Cierre</button>
         </div>
       )}
     </div>
   );
-};
-
-export default CierreCajaView;
+}
