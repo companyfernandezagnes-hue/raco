@@ -1,17 +1,21 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+// src/components/compras/AlbaranesView.tsx
+// ✅ 100% Supabase — sin Firebase, sin datos hardcoded
+// ✅ Voz en todos los campos, foto/cámara IA, interfaz simplificada Gen Z
+// ✅ Notificaciones toast nativas, confirmaciones visuales
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Plus, Search, Camera, Mic, MicOff, Zap, X, Check,
-  ChevronDown, ChevronUp, Trash2, FileText, Package,
-  CheckCircle, Clock, XCircle, Loader2, Sparkles,
-  Building2, Hash,
+  Package, Plus, Mic, MicOff, Camera, Loader2, X, Check,
+  ChevronDown, ChevronUp, Trash2, Sparkles, Search, Filter,
+  AlertTriangle, CheckCircle2, Clock, Truck, FileText, Edit2,
+  MoreVertical, Image as ImageIcon
 } from 'lucide-react';
-import { GoogleGenAI } from '@google/genai';
+import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../../supabase';
 import { useSupabase } from '../../context/SupabaseContext';
+import { GoogleGenAI } from '@google/genai';
+import { cn } from '../../lib/utils';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
 type IVARate = 4 | 10 | 21;
 type Estado = 'pendiente' | 'recibido' | 'facturado' | 'rechazado';
 
@@ -29,7 +33,7 @@ interface AlbaranItem {
 
 interface Albaran {
   id: string;
-  referencia: string;
+  referencia?: string;
   fecha: string;
   supplier_name: string;
   proveedor_id?: string;
@@ -44,22 +48,21 @@ interface Albaran {
   created_at: string;
 }
 
-interface Supplier {
-  id: string;
-  nombre: string;
-  activo: boolean;
-}
+interface Supplier { id: string; nombre: string; activo: boolean; }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
 const aiRef = { current: null as GoogleGenAI | null };
 function getAI(): GoogleGenAI {
-  if (!aiRef.current) aiRef.current = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+  if (!aiRef.current) aiRef.current = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || '' });
   return aiRef.current;
 }
 
 function uid() { return Math.random().toString(36).slice(2, 10); }
 function today() { return new Date().toISOString().split('T')[0]; }
+function fmtEur(n: number) { return n.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' }); }
+function fmtDate(d: string) {
+  return new Date(d + 'T00:00:00').toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' });
+}
 
 function calcItem(item: Omit<AlbaranItem, 'base' | 'iva_amount' | 'total'>): AlbaranItem {
   const base = item.cantidad * item.precio_unitario;
@@ -68,23 +71,12 @@ function calcItem(item: Omit<AlbaranItem, 'base' | 'iva_amount' | 'total'>): Alb
 }
 
 function calcTotals(items: AlbaranItem[]) {
-  const base = items.reduce((s, i) => s + i.base, 0);
-  const iva_total = items.reduce((s, i) => s + i.iva_amount, 0);
-  return { base, iva_total, total: base + iva_total };
+  return {
+    base: items.reduce((s, i) => s + i.base, 0),
+    iva_total: items.reduce((s, i) => s + i.iva_amount, 0),
+    total: items.reduce((s, i) => s + i.total, 0),
+  };
 }
-
-function ivaClass(rate: IVARate) {
-  if (rate === 4) return 'text-emerald-700 bg-emerald-50';
-  if (rate === 10) return 'text-amber-700 bg-amber-50';
-  return 'text-rose-700 bg-rose-50';
-}
-
-const ESTADO_CFG: Record<Estado, { label: string; cls: string }> = {
-  pendiente:  { label: 'Pendiente',  cls: 'text-amber-700 bg-amber-50 border-amber-200' },
-  recibido:   { label: 'Recibido',   cls: 'text-blue-700 bg-blue-50 border-blue-200' },
-  facturado:  { label: 'Facturado',  cls: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
-  rechazado:  { label: 'Rechazado',  cls: 'text-rose-700 bg-rose-50 border-rose-200' },
-};
 
 function parseAIItems(rawItems: any[]): AlbaranItem[] {
   return rawItems.map(it => calcItem({
@@ -99,23 +91,58 @@ function parseAIItems(rawItems: any[]): AlbaranItem[] {
 
 function matchSupplier(name: string, suppliers: Supplier[]): Supplier | undefined {
   const n = (name || '').toLowerCase();
-  return suppliers.find(s =>
-    s.nombre.toLowerCase().includes(n) || n.includes(s.nombre.toLowerCase())
+  return suppliers.find(s => s.nombre.toLowerCase().includes(n) || n.includes(s.nombre.toLowerCase()));
+}
+
+const ESTADO_CFG: Record<Estado, { label: string; cls: string; icon: React.ReactNode }> = {
+  pendiente:  { label: 'Pendiente',  cls: 'text-amber-700 bg-amber-50 border-amber-200',   icon: <Clock size={12} /> },
+  recibido:   { label: 'Recibido',   cls: 'text-blue-700 bg-blue-50 border-blue-200',       icon: <Truck size={12} /> },
+  facturado:  { label: 'Facturado',  cls: 'text-emerald-700 bg-emerald-50 border-emerald-200', icon: <CheckCircle2 size={12} /> },
+  rechazado:  { label: 'Rechazado',  cls: 'text-rose-700 bg-rose-50 border-rose-200',       icon: <AlertTriangle size={12} /> },
+};
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+function useToast() {
+  const [toasts, setToasts] = useState<{ id: string; msg: string; type: 'ok' | 'err' }[]>([]);
+  const show = useCallback((msg: string, type: 'ok' | 'err' = 'ok') => {
+    const id = uid();
+    setToasts(t => [...t, { id, msg, type }]);
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3500);
+  }, []);
+  const ToastContainer = () => (
+    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[500] flex flex-col gap-2 items-center pointer-events-none">
+      <AnimatePresence>
+        {toasts.map(t => (
+          <motion.div key={t.id}
+            initial={{ opacity: 0, y: 20, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -10, scale: 0.9 }}
+            className={cn(
+              'px-5 py-3 rounded-2xl text-sm font-bold shadow-2xl flex items-center gap-2',
+              t.type === 'ok' ? 'bg-slate-900 text-white' : 'bg-rose-500 text-white'
+            )}
+          >
+            {t.type === 'ok' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+            {t.msg}
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
   );
+  return { show, ToastContainer };
 }
 
 // ─── VoiceButton ──────────────────────────────────────────────────────────────
-
-function VoiceButton({ onResult, small }: { onResult: (t: string) => void; small?: boolean }) {
+function VoiceButton({ onResult, small, className = '' }: { onResult: (t: string) => void; small?: boolean; className?: string }) {
   const [on, setOn] = useState(false);
   const ref = useRef<SpeechRecognition | null>(null);
+  const sz = small ? 14 : 16;
 
   const toggle = () => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) { alert('Necesitas Chrome para usar el micrófono'); return; }
     if (on) { ref.current?.stop(); setOn(false); return; }
-    const r = new SR();
-    ref.current = r;
+    const r = new SR(); ref.current = r;
     r.lang = 'es-ES'; r.continuous = false; r.interimResults = false;
     r.onstart = () => setOn(true);
     r.onresult = (e: SpeechRecognitionEvent) => onResult(e.results[0][0].transcript);
@@ -123,22 +150,64 @@ function VoiceButton({ onResult, small }: { onResult: (t: string) => void; small
     r.start();
   };
 
-  const sz = small ? 14 : 16;
   return (
     <button type="button" onClick={toggle}
-      className={`${small ? 'p-1.5' : 'p-2'} rounded-xl shrink-0 transition-all ${
-        on ? 'bg-rose-500 text-white animate-pulse shadow-lg shadow-rose-200' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-      }`}>
+      className={cn(
+        `${small ? 'p-1.5' : 'p-2.5'} rounded-xl transition-all shrink-0`,
+        on ? 'bg-rose-500 text-white animate-pulse shadow-lg shadow-rose-200' : 'bg-slate-100 text-slate-500 hover:bg-slate-200',
+        className
+      )}
+      title={on ? 'Parar grabación' : 'Dictar por voz'}
+    >
       {on ? <MicOff size={sz} /> : <Mic size={sz} />}
     </button>
   );
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// ─── VoiceField: input + botón de voz integrado ────────────────────────────
+function VoiceField({
+  value, onChange, placeholder, type = 'text', className = ''
+}: {
+  value: string; onChange: (v: string) => void;
+  placeholder?: string; type?: string; className?: string;
+}) {
+  return (
+    <div className={cn('flex items-center gap-2', className)}>
+      <input
+        type={type}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 transition-all"
+      />
+      <VoiceButton onResult={onChange} small />
+    </div>
+  );
+}
 
-export default function AlbaranesView() {
-  const { user } = useSupabase();
-  const isAdmin = (user as any)?.rol === 'admin';
+// ─── Empty State ──────────────────────────────────────────────────────────────
+function EmptyState({ onNew }: { onNew: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-24 text-center">
+      <div className="w-20 h-20 bg-slate-100 rounded-[2rem] flex items-center justify-center mb-6 text-slate-300">
+        <Package size={40} />
+      </div>
+      <h3 className="text-xl font-black text-slate-300 uppercase tracking-tight">Sin albaranes</h3>
+      <p className="text-slate-400 text-sm font-medium mt-2 mb-6 max-w-xs">
+        Añade tu primer albarán por voz, foto o manual
+      </p>
+      <button onClick={onNew}
+        className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-2xl font-bold text-sm hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200">
+        <Plus size={16} /> Nuevo albarán
+      </button>
+    </div>
+  );
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+export default function AlbaranesView({ onStatsChange }: { onStatsChange?: () => void }) {
+  const { user } = useSupabase() as any;
+  const { show: toast, ToastContainer } = useToast();
 
   const [albaranes, setAlbaranes] = useState<Albaran[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -151,14 +220,9 @@ export default function AlbaranesView() {
   const [showForm, setShowForm] = useState(false);
   const [inputMode, setInputMode] = useState<'quick' | 'photo' | 'manual'>('quick');
   const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
-  const emptyForm = () => ({
-    referencia: '', fecha: today(), supplier_name: '', proveedor_id: undefined as string | undefined,
-    estado: 'pendiente' as Estado, notas: '', items: [] as AlbaranItem[], imagen_url: undefined as string | undefined,
-  });
-  const [form, setForm] = useState(emptyForm());
-
-  // Quick entry
+  // Quick / voice
   const [quickText, setQuickText] = useState('');
   const [quickOn, setQuickOn] = useState(false);
   const [quickBusy, setQuickBusy] = useState(false);
@@ -170,39 +234,46 @@ export default function AlbaranesView() {
   const [scanning, setScanning] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // Confirm
+  // Pending confirm
   const [pending, setPending] = useState<ReturnType<typeof emptyForm> | null>(null);
 
-  // ── Load ──────────────────────────────────────────────────────────────────
-  useEffect(() => { loadAll(); }, []);
+  // Form
+  const emptyForm = () => ({
+    referencia: '', fecha: today(), supplier_name: '', proveedor_id: undefined as string | undefined,
+    estado: 'pendiente' as Estado, notas: '', items: [] as AlbaranItem[], imagen_url: undefined as string | undefined,
+  });
+  const [form, setForm] = useState(emptyForm());
 
-  async function loadAll() {
+  // ── Load ──────────────────────────────────────────────────────────────────
+  const loadAll = useCallback(async () => {
     setLoading(true);
     const [a, s] = await Promise.all([
       supabase.from('delivery_notes').select('*').order('created_at', { ascending: false }),
       supabase.from('suppliers').select('id,nombre,activo').eq('activo', true).order('nombre'),
     ]);
-    if (a.data) setAlbaranes(a.data);
-    if (s.data) setSuppliers(s.data);
+    if (a.data) setAlbaranes(a.data as Albaran[]);
+    if (s.data) setSuppliers(s.data as Supplier[]);
     setLoading(false);
-  }
+  }, []);
 
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  // ── Filtered list ─────────────────────────────────────────────────────────
   const filtered = albaranes.filter(a => {
     const q = search.toLowerCase();
     return (!q || a.referencia?.toLowerCase().includes(q) || a.supplier_name?.toLowerCase().includes(q))
       && (filterEstado === 'todos' || a.estado === filterEstado);
   });
 
-  // ── Quick voice ───────────────────────────────────────────────────────────
+  // ── Quick voice (dictado rápido) ──────────────────────────────────────────
   function toggleQuickVoice() {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) { alert('Necesitas Chrome para usar el micrófono'); return; }
     if (quickOn) { quickRef.current?.stop(); setQuickOn(false); return; }
-    const r = new SR();
-    quickRef.current = r;
+    const r = new SR(); quickRef.current = r;
     r.lang = 'es-ES'; r.continuous = true; r.interimResults = true;
     let final = '';
-    const t = setTimeout(() => r.stop(), 15000);
+    const t = setTimeout(() => r.stop(), 20000);
     r.onstart = () => setQuickOn(true);
     r.onresult = (e: SpeechRecognitionEvent) => {
       final = Array.from(e.results).map(x => x[0].transcript).join(' ');
@@ -217,43 +288,52 @@ export default function AlbaranesView() {
     if (!text.trim()) return;
     setQuickBusy(true);
     try {
-      const prompt = `Eres un asistente de restaurante. Extrae datos del siguiente texto para crear un albarán de proveedor.
-
-Texto: "${text}"
-Proveedores conocidos: ${suppliers.map(s => s.nombre).join(', ') || 'ninguno'}
-Fecha de hoy: ${today()}
-
-Responde SOLO con JSON válido, sin markdown ni explicaciones:
-{"referencia":"","fecha":"YYYY-MM-DD","supplier_name":"","notas":"","items":[{"descripcion":"","cantidad":0,"unidad":"","precio_unitario":0,"iva":4|10|21}]}
-
-Reglas IVA: 4=alimentos básicos crudos, 10=alimentos procesados/restaurante, 21=otros`;
-
-      const resp = await getAI().models.generateContent({
+      const res = await getAI().models.generateContent({
         model: 'gemini-2.0-flash',
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        contents: [{
+          role: 'user',
+          parts: [{
+            text: `Extrae datos del siguiente texto para crear un albarán de proveedor de restaurante.
+Devuelve SOLO JSON válido con este formato exacto:
+{
+  "referencia": "string o null",
+  "fecha": "YYYY-MM-DD o null",
+  "supplier_name": "string",
+  "notas": "string o null",
+  "items": [
+    { "descripcion": "string", "cantidad": number, "unidad": "kg|ud|l|caja|doc", "precio_unitario": number, "iva": 4|10|21 }
+  ]
+}
+Texto: "${text}"
+Fecha actual: ${today()}
+Si no menciona IVA, usa 10 para alimentos y 21 para otros.`
+          }]
+        }]
       });
-      const raw = resp.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      const raw = res.candidates?.[0]?.content?.parts?.[0]?.text || '';
       const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
       const items = parseAIItems(parsed.items || []);
       const sup = matchSupplier(parsed.supplier_name, suppliers);
       setPending({
-        ...emptyForm(),
         referencia: parsed.referencia || '',
         fecha: parsed.fecha || today(),
         supplier_name: parsed.supplier_name || '',
         proveedor_id: sup?.id,
         notas: parsed.notas || '',
+        estado: 'pendiente',
         items,
+        imagen_url: undefined,
       });
+      setQuickText('');
     } catch {
-      alert('No pude entender el texto. Inténtalo más claro o usa el modo Manual.');
+      toast('No pude procesar el texto. Usa modo Manual.', 'err');
     } finally {
       setQuickBusy(false);
     }
   }
 
-  // ── Photo ─────────────────────────────────────────────────────────────────
-  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+  // ── Photo scan ────────────────────────────────────────────────────────────
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
     setScanFile(f);
@@ -267,58 +347,66 @@ Reglas IVA: 4=alimentos básicos crudos, 10=alimentos procesados/restaurante, 21
     setScanning(true);
     try {
       const base64 = preview.split(',')[1];
-      const prompt = `Analiza esta imagen de un albarán. Puede ser impreso, escrito a mano, ticket o nota en papel.
-Proveedores conocidos: ${suppliers.map(s => s.nombre).join(', ') || 'ninguno'}
-Fecha de hoy: ${today()}
-
-Responde SOLO con JSON válido, sin markdown:
-{"referencia":"","fecha":"YYYY-MM-DD","supplier_name":"","notas":"","items":[{"descripcion":"","cantidad":0,"unidad":"","precio_unitario":0,"iva":4|10|21}]}`;
-
-      const resp = await getAI().models.generateContent({
+      const mimeType = scanFile.type || 'image/jpeg';
+      const res = await getAI().models.generateContent({
         model: 'gemini-2.0-flash',
         contents: [{
           role: 'user',
           parts: [
-            { inlineData: { mimeType: scanFile.type || 'image/jpeg', data: base64 } },
-            { text: prompt },
-          ],
-        }],
+            { inlineData: { mimeType, data: base64 } },
+            {
+              text: `Eres un asistente de restaurante. Lee este albarán/ticket y devuelve SOLO JSON válido:
+{
+  "referencia": "string o null",
+  "fecha": "YYYY-MM-DD o null",
+  "supplier_name": "string",
+  "notas": "string o null",
+  "items": [
+    { "descripcion": "string", "cantidad": number, "unidad": "kg|ud|l|caja|doc", "precio_unitario": number, "iva": 4|10|21 }
+  ]
+}
+Si no ves precio, pon 0. Fecha actual: ${today()}.`
+            }
+          ]
+        }]
       });
-      const raw = resp.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      const raw = res.candidates?.[0]?.content?.parts?.[0]?.text || '';
       const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
       const items = parseAIItems(parsed.items || []);
       const sup = matchSupplier(parsed.supplier_name, suppliers);
       setPending({
-        ...emptyForm(),
         referencia: parsed.referencia || '',
         fecha: parsed.fecha || today(),
         supplier_name: parsed.supplier_name || '',
         proveedor_id: sup?.id,
         notas: parsed.notas || '',
+        estado: 'pendiente',
         items,
         imagen_url: preview,
       });
       setScanFile(null); setPreview(null);
     } catch {
-      alert('No pude leer la imagen. Intenta con mejor iluminación o usa el modo Manual.');
+      toast('No pude leer la imagen. Intenta con mejor luz.', 'err');
     } finally {
       setScanning(false);
     }
   }
 
-  // ── Confirm ───────────────────────────────────────────────────────────────
+  // ── Confirm pending ───────────────────────────────────────────────────────
   function confirmPending() {
     if (!pending) return;
     setForm(pending);
     setPending(null);
     setInputMode('manual');
     setShowForm(true);
-    setQuickText('');
   }
 
-  // ── Form ──────────────────────────────────────────────────────────────────
+  // ── Form helpers ──────────────────────────────────────────────────────────
   function addItem() {
-    setForm(f => ({ ...f, items: [...f.items, calcItem({ id: uid(), descripcion: '', cantidad: 1, unidad: 'ud', precio_unitario: 0, iva: 10 })] }));
+    setForm(f => ({
+      ...f,
+      items: [...f.items, calcItem({ id: uid(), descripcion: '', cantidad: 1, unidad: 'ud', precio_unitario: 0, iva: 10 })]
+    }));
   }
 
   function updItem(id: string, ch: Partial<AlbaranItem>) {
@@ -329,252 +417,421 @@ Responde SOLO con JSON válido, sin markdown:
     setForm(f => ({ ...f, items: f.items.filter(i => i.id !== id) }));
   }
 
+  // ── Save ──────────────────────────────────────────────────────────────────
   async function save() {
-    if (!form.supplier_name?.trim()) return alert('Añade el nombre del proveedor');
-    if (!form.fecha) return alert('Añade la fecha');
-    if (!form.items.length) return alert('Añade al menos un producto');
+    if (!form.supplier_name?.trim()) { toast('Añade el nombre del proveedor', 'err'); return; }
+    if (!form.fecha) { toast('Añade la fecha', 'err'); return; }
+    if (!form.items.length) { toast('Añade al menos un producto', 'err'); return; }
     setSaving(true);
     try {
       const t = calcTotals(form.items);
-      const { error } = await supabase.from('delivery_notes').insert({
-        referencia: form.referencia, fecha: form.fecha,
-        supplier_name: form.supplier_name, proveedor_id: form.proveedor_id || null,
-        estado: form.estado, base: t.base, iva_total: t.iva_total, total: t.total,
-        items: form.items, notas: form.notas, empleado_id: user?.id || null,
+      const payload = {
+        referencia: form.referencia || null,
+        fecha: form.fecha,
+        supplier_name: form.supplier_name,
+        proveedor_id: form.proveedor_id || null,
+        estado: form.estado,
+        base: t.base,
+        iva_total: t.iva_total,
+        total: t.total,
+        items: form.items,
+        notas: form.notas || null,
+        empleado_id: (user as any)?.id || null,
         imagen_url: form.imagen_url || null,
-      });
-      if (error) throw error;
-      setShowForm(false); setForm(emptyForm()); setInputMode('quick');
+      };
+
+      if (editingId) {
+        const { error } = await supabase.from('delivery_notes').update(payload).eq('id', editingId);
+        if (error) throw error;
+        toast('Albarán actualizado ✓');
+      } else {
+        const { error } = await supabase.from('delivery_notes').insert(payload);
+        if (error) throw error;
+        toast('Albarán guardado ✓');
+      }
+
+      setShowForm(false);
+      setForm(emptyForm());
+      setEditingId(null);
+      setInputMode('quick');
       await loadAll();
+      onStatsChange?.();
     } catch (err: any) {
-      alert('Error al guardar: ' + err.message);
-    } finally { setSaving(false); }
+      toast('Error al guardar: ' + err.message, 'err');
+    } finally {
+      setSaving(false);
+    }
   }
 
-  async function changeEstado(id: string, e: Estado) {
-    await supabase.from('delivery_notes').update({ estado: e }).eq('id', id);
-    setAlbaranes(prev => prev.map(a => a.id === id ? { ...a, estado: e } : a));
+  // ── Change estado ─────────────────────────────────────────────────────────
+  async function changeEstado(id: string, estado: Estado) {
+    const { error } = await supabase.from('delivery_notes').update({ estado }).eq('id', id);
+    if (error) { toast('Error al actualizar', 'err'); return; }
+    setAlbaranes(prev => prev.map(a => a.id === id ? { ...a, estado } : a));
+    toast(`Estado → ${ESTADO_CFG[estado].label}`);
+    onStatsChange?.();
   }
 
+  // ── Delete ────────────────────────────────────────────────────────────────
   async function del(id: string) {
-    if (!confirm('¿Eliminar este albarán?')) return;
-    await supabase.from('delivery_notes').delete().eq('id', id);
+    if (!confirm('¿Eliminar este albarán? No se puede deshacer.')) return;
+    const { error } = await supabase.from('delivery_notes').delete().eq('id', id);
+    if (error) { toast('Error al eliminar', 'err'); return; }
     setAlbaranes(prev => prev.filter(a => a.id !== id));
+    if (expandedId === id) setExpandedId(null);
+    toast('Albarán eliminado');
+    onStatsChange?.();
+  }
+
+  // ── Edit ──────────────────────────────────────────────────────────────────
+  function startEdit(a: Albaran) {
+    setForm({
+      referencia: a.referencia || '',
+      fecha: a.fecha,
+      supplier_name: a.supplier_name,
+      proveedor_id: a.proveedor_id,
+      estado: a.estado,
+      notas: a.notas || '',
+      items: a.items,
+      imagen_url: a.imagen_url,
+    });
+    setEditingId(a.id);
+    setInputMode('manual');
+    setShowForm(true);
   }
 
   const totales = calcTotals(form.items);
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="space-y-5">
+      <ToastContainer />
 
-      {/* Header */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-20 px-4 py-3">
-        <div className="max-w-5xl mx-auto flex items-center gap-3">
-          <div className="flex-1">
-            <h1 className="text-lg font-bold text-slate-900">Albaranes</h1>
-            <p className="text-xs text-slate-400">{albaranes.length} registros</p>
-          </div>
-          <button
-            onClick={() => { setShowForm(true); setInputMode('quick'); setForm(emptyForm()); }}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl transition-all shadow-sm"
-          >
-            <Plus size={16} /> Nuevo
-          </button>
+      {/* ── Toolbar ── */}
+      <div className="flex flex-wrap items-center gap-3">
+        {/* Search + voz */}
+        <div className="flex items-center gap-2 flex-1 min-w-[200px] bg-white border border-slate-200 rounded-2xl px-4 py-2.5 shadow-sm">
+          <Search size={16} className="text-slate-400 shrink-0" />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Buscar albarán o proveedor…"
+            className="flex-1 text-sm bg-transparent outline-none placeholder:text-slate-400"
+          />
+          <VoiceButton onResult={setSearch} small />
         </div>
+
+        {/* Filter estado */}
+        <div className="flex bg-white border border-slate-200 rounded-2xl p-1 gap-1 shadow-sm">
+          {(['todos', 'pendiente', 'recibido', 'facturado', 'rechazado'] as const).map(e => (
+            <button
+              key={e}
+              onClick={() => setFilterEstado(e)}
+              className={cn(
+                'px-3 py-1.5 rounded-xl text-xs font-bold transition-all capitalize',
+                filterEstado === e ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-800'
+              )}
+            >
+              {e === 'todos' ? 'Todos' : ESTADO_CFG[e].label}
+            </button>
+          ))}
+        </div>
+
+        {/* New button */}
+        <button
+          onClick={() => { setForm(emptyForm()); setEditingId(null); setInputMode('quick'); setShowForm(true); }}
+          className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-2xl text-sm font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200"
+        >
+          <Plus size={16} /> Nuevo albarán
+        </button>
       </div>
 
-      <div className="max-w-5xl mx-auto px-4 py-4 space-y-3">
-        {/* Filters */}
-        <div className="flex gap-2">
-          <div className="flex-1 relative">
-            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Buscar proveedor o referencia…"
-              className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
-          </div>
-          <select value={filterEstado} onChange={e => setFilterEstado(e.target.value as any)}
-            className="px-3 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
-            <option value="todos">Todos</option>
-            <option value="pendiente">Pendiente</option>
-            <option value="recibido">Recibido</option>
-            <option value="facturado">Facturado</option>
-            <option value="rechazado">Rechazado</option>
-          </select>
+      {/* ── List ── */}
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 size={32} className="animate-spin text-indigo-400" />
         </div>
+      ) : filtered.length === 0 ? (
+        <EmptyState onNew={() => { setForm(emptyForm()); setEditingId(null); setInputMode('quick'); setShowForm(true); }} />
+      ) : (
+        <div className="space-y-3">
+          {filtered.map(a => {
+            const cfg = ESTADO_CFG[a.estado];
+            const expanded = expandedId === a.id;
+            return (
+              <motion.div key={a.id} layout
+                className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm hover:shadow-md transition-all"
+              >
+                {/* Row */}
+                <div
+                  className="flex items-center gap-4 p-5 cursor-pointer"
+                  onClick={() => setExpandedId(expanded ? null : a.id)}
+                >
+                  {/* Icon */}
+                  <div className="w-11 h-11 bg-indigo-50 rounded-2xl flex items-center justify-center shrink-0">
+                    {a.imagen_url ? <ImageIcon size={18} className="text-indigo-400" /> : <Truck size={18} className="text-indigo-400" />}
+                  </div>
 
-        {/* List */}
-        {loading ? (
-          <div className="flex justify-center py-20"><Loader2 className="animate-spin text-indigo-400" size={32} /></div>
-        ) : filtered.length === 0 ? (
-          <div className="text-center py-20 text-slate-400">
-            <Package size={48} className="mx-auto mb-3 opacity-30" />
-            <p className="font-medium text-slate-500">Sin albaranes</p>
-            <p className="text-sm mt-1">Pulsa <strong>Nuevo</strong> y habla, saca una foto o escribe</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <AnimatePresence>
-              {filtered.map(alb => {
-                const cfg = ESTADO_CFG[alb.estado];
-                const exp = expandedId === alb.id;
-                return (
-                  <motion.div key={alb.id} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                    className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-                    <div onClick={() => setExpandedId(exp ? null : alb.id)}
-                      className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <span className="font-semibold text-slate-800 text-sm truncate">{alb.supplier_name || '—'}</span>
-                          <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${cfg.cls}`}>
-                            {cfg.label}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-3 text-xs text-slate-400">
-                          {alb.referencia && <span>#{alb.referencia}</span>}
-                          <span>{alb.fecha ? new Date(alb.fecha).toLocaleDateString('es-ES') : '—'}</span>
-                          <span>{alb.items?.length || 0} líneas</span>
-                        </div>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className="font-bold text-slate-900 text-sm">{alb.total?.toFixed(2)} €</p>
-                        <p className="text-xs text-slate-400">IVA {alb.iva_total?.toFixed(2)} €</p>
-                      </div>
-                      {exp ? <ChevronUp size={16} className="text-slate-300 shrink-0" /> : <ChevronDown size={16} className="text-slate-300 shrink-0" />}
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-black text-slate-900 truncate">{a.supplier_name}</span>
+                      {a.referencia && <span className="text-xs text-slate-400 font-medium">#{a.referencia}</span>}
                     </div>
+                    <p className="text-xs text-slate-400 font-medium mt-0.5">{fmtDate(a.fecha)}</p>
+                  </div>
 
-                    <AnimatePresence>
-                      {exp && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.18 }}
-                          className="border-t border-slate-100">
-                          <div className="px-4 py-3 space-y-3">
-                            <div className="space-y-1">
-                              {(alb.items || []).map((item, i) => (
-                                <div key={i} className="flex items-center justify-between text-sm bg-slate-50 rounded-lg px-3 py-2">
-                                  <span className="flex-1 text-slate-700">{item.descripcion}</span>
-                                  <span className="text-slate-400 text-xs mx-2">{item.cantidad} {item.unidad}</span>
-                                  <span className={`text-xs font-semibold px-1.5 py-0.5 rounded mr-2 ${ivaClass(item.iva)}`}>IVA {item.iva}%</span>
-                                  <span className="font-semibold text-slate-800">{item.total?.toFixed(2)} €</span>
-                                </div>
+                  {/* Status badge */}
+                  <span className={cn('px-2.5 py-1 rounded-xl border text-[11px] font-black flex items-center gap-1 shrink-0', cfg.cls)}>
+                    {cfg.icon} {cfg.label}
+                  </span>
+
+                  {/* Total */}
+                  <span className="font-black text-slate-900 text-lg shrink-0 hidden sm:block">{fmtEur(a.total)}</span>
+
+                  {/* Expand */}
+                  <div className="text-slate-300 shrink-0">
+                    {expanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                  </div>
+                </div>
+
+                {/* Expanded */}
+                <AnimatePresence>
+                  {expanded && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="px-5 pb-5 border-t border-slate-100 pt-4 space-y-4">
+                        {/* Items table */}
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-[10px] font-black uppercase text-slate-400 tracking-widest">
+                                <th className="text-left pb-2">Producto</th>
+                                <th className="text-right pb-2">Cant.</th>
+                                <th className="text-right pb-2">Precio</th>
+                                <th className="text-right pb-2">IVA</th>
+                                <th className="text-right pb-2">Total</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50">
+                              {(a.items || []).map(item => (
+                                <tr key={item.id}>
+                                  <td className="py-1.5 font-medium text-slate-700">{item.descripcion}</td>
+                                  <td className="py-1.5 text-right text-slate-500">{item.cantidad} {item.unidad}</td>
+                                  <td className="py-1.5 text-right text-slate-500">{fmtEur(item.precio_unitario)}</td>
+                                  <td className="py-1.5 text-right">
+                                    <span className="text-[10px] font-black px-1.5 py-0.5 rounded-lg bg-slate-100 text-slate-600">{item.iva}%</span>
+                                  </td>
+                                  <td className="py-1.5 text-right font-bold text-slate-900">{fmtEur(item.total)}</td>
+                                </tr>
                               ))}
-                            </div>
-                            {alb.notas && (
-                              <p className="text-xs text-slate-500 bg-amber-50 rounded-lg px-3 py-2 border border-amber-100">📝 {alb.notas}</p>
-                            )}
-                            <div className="flex items-center gap-2 flex-wrap">
-                              {alb.estado === 'pendiente' && (
-                                <button onClick={() => changeEstado(alb.id, 'recibido')}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg">
-                                  <CheckCircle size={12} /> Marcar recibido
-                                </button>
-                              )}
-                              {alb.estado === 'recibido' && isAdmin && (
-                                <button onClick={() => changeEstado(alb.id, 'facturado')}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg">
-                                  <FileText size={12} /> Marcar facturado
-                                </button>
-                              )}
-                              {alb.estado === 'pendiente' && (
-                                <button onClick={() => changeEstado(alb.id, 'rechazado')}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-100 text-rose-700 text-xs font-semibold rounded-lg">
-                                  <XCircle size={12} /> Rechazar
-                                </button>
-                              )}
-                              {isAdmin && (
-                                <button onClick={() => del(alb.id)}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 text-slate-500 text-xs font-semibold rounded-lg ml-auto">
-                                  <Trash2 size={12} /> Eliminar
-                                </button>
-                              )}
-                            </div>
+                            </tbody>
+                            <tfoot>
+                              <tr className="border-t border-slate-200">
+                                <td colSpan={4} className="pt-2 text-xs font-black text-slate-400 uppercase">Total</td>
+                                <td className="pt-2 text-right font-black text-slate-900 text-base">{fmtEur(a.total)}</td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+
+                        {a.notas && (
+                          <p className="text-xs text-slate-500 bg-slate-50 rounded-xl px-4 py-2 italic">
+                            {a.notas}
+                          </p>
+                        )}
+
+                        {/* Actions */}
+                        <div className="flex flex-wrap items-center gap-2 pt-2">
+                          {/* Estado change */}
+                          {(['pendiente', 'recibido', 'facturado', 'rechazado'] as Estado[])
+                            .filter(e => e !== a.estado)
+                            .map(e => (
+                              <button key={e} onClick={() => changeEstado(a.id, e)}
+                                className={cn('px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-all', ESTADO_CFG[e].cls, 'hover:opacity-80')}>
+                                → {ESTADO_CFG[e].label}
+                              </button>
+                            ))
+                          }
+                          <div className="ml-auto flex items-center gap-2">
+                            <button onClick={() => startEdit(a)}
+                              className="p-2 rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all" title="Editar">
+                              <Edit2 size={14} />
+                            </button>
+                            <button onClick={() => del(a.id)}
+                              className="p-2 rounded-xl bg-rose-50 text-rose-500 hover:bg-rose-100 transition-all" title="Eliminar">
+                              <Trash2 size={14} />
+                            </button>
                           </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </motion.div>
-                );
-              })}
-            </AnimatePresence>
-          </div>
-        )}
-      </div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+            );
+          })}
+        </div>
+      )}
 
-      {/* ─── New albaran modal ────────────────────────────────────────────────── */}
+      {/* ── Pending Confirm Modal ── */}
       <AnimatePresence>
-        {showForm && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-            onClick={e => { if (e.target === e.currentTarget) { setShowForm(false); setForm(emptyForm()); }}}>
+        {pending && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"
+          >
             <motion.div
-              initial={{ y: 60, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 60, opacity: 0 }}
-              transition={{ type: 'spring', damping: 28, stiffness: 350 }}
-              className="bg-white rounded-3xl w-full max-w-2xl max-h-[90vh] overflow-hidden shadow-2xl flex flex-col">
-
-              {/* Modal header */}
-              <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 shrink-0">
-                <h2 className="font-bold text-slate-900">Nuevo albarán</h2>
-                <button onClick={() => { setShowForm(false); setForm(emptyForm()); }} className="p-2 rounded-xl hover:bg-slate-100">
+              initial={{ y: 40, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 40, opacity: 0 }}
+              className="bg-white w-full max-w-lg rounded-[2.5rem] p-6 space-y-4 shadow-2xl"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-indigo-400">IA detectó</p>
+                  <h3 className="text-xl font-black text-slate-900">{pending.supplier_name || 'Proveedor'}</h3>
+                </div>
+                <button onClick={() => setPending(null)} className="p-2 rounded-xl hover:bg-slate-100 transition-all">
                   <X size={18} />
                 </button>
               </div>
 
-              {/* Mode tabs */}
-              <div className="flex gap-1.5 px-5 pt-4 shrink-0">
-                {([
-                  { id: 'quick' as const, icon: <Zap size={13} />, label: 'Rápido', desc: 'Habla o escribe' },
-                  { id: 'photo' as const, icon: <Camera size={13} />, label: 'Foto', desc: 'Saca foto al papel' },
-                  { id: 'manual' as const, icon: <FileText size={13} />, label: 'Manual', desc: 'Rellenar a mano' },
-                ]).map(m => (
-                  <button key={m.id} onClick={() => setInputMode(m.id)}
-                    className={`flex-1 flex flex-col items-center py-2.5 px-2 rounded-2xl transition-all text-center ${
-                      inputMode === m.id ? 'bg-indigo-600 text-white shadow' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                    }`}>
-                    <div className="flex items-center gap-1 font-semibold text-xs">{m.icon} {m.label}</div>
-                    <span className={`text-[10px] mt-0.5 ${inputMode === m.id ? 'text-indigo-200' : 'text-slate-400'}`}>{m.desc}</span>
-                  </button>
+              <div className="space-y-1.5">
+                {(pending.items || []).slice(0, 5).map((item, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm px-4 py-2.5 bg-slate-50 rounded-2xl">
+                    <span className="font-medium text-slate-700">{item.descripcion}</span>
+                    <span className="font-black text-slate-900">{fmtEur(item.total)}</span>
+                  </div>
                 ))}
+                {pending.items.length > 5 && (
+                  <p className="text-xs text-center text-slate-400">+{pending.items.length - 5} más…</p>
+                )}
               </div>
 
-              {/* Scrollable body */}
-              <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              <div className="flex items-center justify-between px-4 py-3 bg-indigo-50 rounded-2xl">
+                <span className="text-sm font-bold text-indigo-600">Total detectado</span>
+                <span className="text-xl font-black text-indigo-700">{fmtEur(calcTotals(pending.items).total)}</span>
+              </div>
 
-                {/* QUICK */}
-                {inputMode === 'quick' && (
+              <div className="flex gap-3">
+                <button onClick={() => setPending(null)}
+                  className="flex-1 py-3 border border-slate-200 rounded-2xl text-sm font-bold text-slate-600 hover:bg-slate-50 transition-all">
+                  Cancelar
+                </button>
+                <button onClick={confirmPending}
+                  className="flex-1 py-3 bg-indigo-600 text-white rounded-2xl text-sm font-bold hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-200">
+                  <Check size={16} /> Confirmar y editar
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Form Modal ── */}
+      <AnimatePresence>
+        {showForm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ y: 40, opacity: 0, scale: 0.97 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: 40, opacity: 0, scale: 0.97 }}
+              className="bg-white w-full max-w-2xl rounded-[2.5rem] flex flex-col max-h-[92vh] overflow-hidden shadow-2xl"
+            >
+              {/* Header */}
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between shrink-0">
+                <h2 className="text-xl font-black text-slate-900">
+                  {editingId ? 'Editar albarán' : 'Nuevo albarán'}
+                </h2>
+                <button onClick={() => { setShowForm(false); setEditingId(null); }} className="p-2 rounded-xl hover:bg-slate-100 transition-all">
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Mode tabs (solo en nuevo) */}
+              {!editingId && (
+                <div className="px-6 pt-4 shrink-0">
+                  <div className="grid grid-cols-3 gap-2 bg-slate-100 p-1 rounded-2xl">
+                    {[
+                      { id: 'quick', icon: '⚡', label: 'Rápido', desc: 'Habla o escribe' },
+                      { id: 'photo', icon: '📸', label: 'Foto',   desc: 'Escanea el papel' },
+                      { id: 'manual', icon: '✏️', label: 'Manual', desc: 'Campo a campo' },
+                    ].map(m => (
+                      <button key={m.id} onClick={() => setInputMode(m.id as any)}
+                        className={cn(
+                          'flex flex-col items-center py-2.5 px-2 rounded-xl transition-all text-center',
+                          inputMode === m.id ? 'bg-indigo-600 text-white shadow' : 'bg-transparent text-slate-500 hover:bg-white'
+                        )}>
+                        <span className="text-lg leading-none">{m.icon}</span>
+                        <span className="text-xs font-black mt-1">{m.label}</span>
+                        <span className={cn('text-[10px] mt-0.5', inputMode === m.id ? 'text-indigo-200' : 'text-slate-400')}>
+                          {m.desc}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Scrollable body */}
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+
+                {/* ── QUICK mode ── */}
+                {inputMode === 'quick' && !editingId && (
                   <div className="space-y-3">
                     <div className="bg-indigo-50 rounded-2xl p-4 border border-indigo-100">
                       <p className="text-xs font-semibold text-indigo-700 mb-1">💡 Habla o escribe con naturalidad</p>
                       <p className="text-xs text-indigo-500 leading-relaxed">
-                        Ej: <em>"Carnes Selectas, 20 kg de solomillo a 25 euros, ref 1234"</em>
+                        Ej: <em>"Carnes Selectas, 20 kg de solomillo a 25 euros con referencia 1234"</em>
                       </p>
                     </div>
                     <div className="relative">
-                      <textarea value={quickText} onChange={e => setQuickText(e.target.value)}
+                      <textarea
+                        value={quickText}
+                        onChange={e => setQuickText(e.target.value)}
                         placeholder="Escribe aquí o pulsa el micrófono…"
                         rows={4}
-                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 pr-14" />
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 pr-14"
+                      />
                       <button type="button" onClick={toggleQuickVoice}
-                        className={`absolute right-3 bottom-3 p-2.5 rounded-xl transition-all ${
+                        className={cn(
+                          'absolute right-3 bottom-3 p-2.5 rounded-xl transition-all',
                           quickOn ? 'bg-rose-500 text-white animate-pulse shadow-lg shadow-rose-200' : 'bg-indigo-100 text-indigo-600 hover:bg-indigo-200'
-                        }`}>
+                        )}>
                         {quickOn ? <MicOff size={18} /> : <Mic size={18} />}
                       </button>
                     </div>
                     {quickOn && (
                       <p className="flex items-center gap-2 text-sm text-rose-500 animate-pulse">
                         <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />
-                        Escuchando… (máx. 15 seg)
+                        Escuchando… (máx. 20 seg)
                       </p>
                     )}
-                    <button onClick={() => processQuick(quickText)} disabled={!quickText.trim() || quickBusy}
-                      className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-2xl transition-all">
+                    <button
+                      onClick={() => processQuick(quickText)}
+                      disabled={!quickText.trim() || quickBusy}
+                      className="w-full flex items-center justify-center gap-2 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-2xl transition-all"
+                    >
                       {quickBusy ? <><Loader2 size={16} className="animate-spin" /> Procesando con IA…</> : <><Sparkles size={16} /> Extraer con IA</>}
                     </button>
                   </div>
                 )}
 
-                {/* PHOTO */}
-                {inputMode === 'photo' && (
+                {/* ── PHOTO mode ── */}
+                {inputMode === 'photo' && !editingId && (
                   <div className="space-y-3">
                     <div className="bg-amber-50 rounded-2xl p-4 border border-amber-100">
                       <p className="text-xs font-semibold text-amber-700 mb-1">📸 Cualquier papel sirve</p>
@@ -585,139 +842,190 @@ Responde SOLO con JSON válido, sin markdown:
                         className="w-full border-2 border-dashed border-slate-300 hover:border-indigo-400 rounded-2xl py-14 flex flex-col items-center gap-3 text-slate-400 hover:text-indigo-500 transition-all">
                         <Camera size={36} />
                         <span className="text-sm font-medium">Toca para elegir foto o PDF</span>
+                        <span className="text-xs text-slate-300">O arrastra el archivo aquí</span>
                       </button>
                     ) : (
                       <div className="space-y-3">
                         <div className="relative rounded-2xl overflow-hidden bg-slate-100 max-h-56 flex items-center justify-center">
                           <img src={preview} alt="preview" className="w-full max-h-56 object-contain" />
                           <button onClick={() => { setScanFile(null); setPreview(null); }}
-                            className="absolute top-2 right-2 p-1.5 bg-white rounded-lg shadow">
+                            className="absolute top-2 right-2 p-1.5 bg-white/90 rounded-xl shadow hover:bg-white transition-all">
                             <X size={14} />
                           </button>
                         </div>
                         <button onClick={scanPhoto} disabled={scanning}
-                          className="w-full flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-semibold rounded-2xl transition-all">
-                          {scanning ? <><Loader2 size={16} className="animate-spin" /> Leyendo con IA…</> : <><Sparkles size={16} /> Leer albarán con IA</>}
+                          className="w-full flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white font-bold rounded-2xl transition-all">
+                          {scanning ? <><Loader2 size={16} className="animate-spin" /> Leyendo con IA…</> : <><Sparkles size={16} /> Escanear albarán</>}
                         </button>
                       </div>
                     )}
-                    <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={handleFile} />
+                    <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={handleFileChange} />
                   </div>
                 )}
 
-                {/* MANUAL */}
-                {inputMode === 'manual' && (
-                  <div className="space-y-4">
-                    {/* Proveedor */}
-                    <div>
-                      <label className="text-xs font-semibold text-slate-600 mb-1.5 block">Proveedor *</label>
-                      <div className="flex gap-2">
-                        <div className="flex-1 relative">
-                          <Building2 size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                          <input value={form.supplier_name}
+                {/* ── MANUAL mode ── */}
+                {(inputMode === 'manual' || editingId) && (
+                  <div className="space-y-5">
+                    {/* Basic fields */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-black uppercase tracking-widest text-slate-400">Proveedor *</label>
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={form.proveedor_id || ''}
                             onChange={e => {
-                              const v = e.target.value;
-                              const s = suppliers.find(x => x.nombre.toLowerCase() === v.toLowerCase());
-                              setForm(f => ({ ...f, supplier_name: v, proveedor_id: s?.id }));
+                              const sup = suppliers.find(s => s.id === e.target.value);
+                              setForm(f => ({ ...f, proveedor_id: e.target.value || undefined, supplier_name: sup?.nombre || f.supplier_name }));
                             }}
-                            list="sup-list" placeholder="Nombre del proveedor"
-                            className="w-full pl-8 pr-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
-                          <datalist id="sup-list">{suppliers.map(s => <option key={s.id} value={s.nombre} />)}</datalist>
+                            className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                          >
+                            <option value="">— Escribe nombre —</option>
+                            {suppliers.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+                          </select>
                         </div>
-                        <VoiceButton onResult={t => setForm(f => ({ ...f, supplier_name: t }))} />
+                        {!form.proveedor_id && (
+                          <VoiceField
+                            value={form.supplier_name}
+                            onChange={v => setForm(f => ({ ...f, supplier_name: v }))}
+                            placeholder="O escribe el nombre del proveedor"
+                          />
+                        )}
                       </div>
-                    </div>
 
-                    {/* Ref + Fecha */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-xs font-semibold text-slate-600 mb-1.5 block">Referencia</label>
-                        <div className="flex gap-2">
-                          <div className="relative flex-1">
-                            <Hash size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                            <input value={form.referencia} onChange={e => setForm(f => ({ ...f, referencia: e.target.value }))}
-                              placeholder="Nº albarán"
-                              className="w-full pl-7 pr-2 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
-                          </div>
-                          <VoiceButton small onResult={t => setForm(f => ({ ...f, referencia: t.replace(/\s/g,'') }))} />
-                        </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-black uppercase tracking-widest text-slate-400">Referencia</label>
+                        <VoiceField
+                          value={form.referencia}
+                          onChange={v => setForm(f => ({ ...f, referencia: v }))}
+                          placeholder="Nº de referencia"
+                        />
                       </div>
-                      <div>
-                        <label className="text-xs font-semibold text-slate-600 mb-1.5 block">Fecha *</label>
-                        <input type="date" value={form.fecha} onChange={e => setForm(f => ({ ...f, fecha: e.target.value }))}
-                          className="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-black uppercase tracking-widest text-slate-400">Fecha *</label>
+                        <input
+                          type="date"
+                          value={form.fecha}
+                          onChange={e => setForm(f => ({ ...f, fecha: e.target.value }))}
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-black uppercase tracking-widest text-slate-400">Estado</label>
+                        <select
+                          value={form.estado}
+                          onChange={e => setForm(f => ({ ...f, estado: e.target.value as Estado }))}
+                          className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                        >
+                          <option value="pendiente">Pendiente</option>
+                          <option value="recibido">Recibido</option>
+                          <option value="facturado">Facturado</option>
+                          <option value="rechazado">Rechazado</option>
+                        </select>
                       </div>
                     </div>
 
                     {/* Items */}
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <label className="text-xs font-semibold text-slate-600">Productos *</label>
-                        <button type="button" onClick={addItem}
-                          className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-semibold">
-                          <Plus size={13} /> Añadir línea
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-black uppercase tracking-widest text-slate-400">Productos *</label>
+                        <button onClick={addItem}
+                          className="flex items-center gap-1 px-3 py-1.5 bg-slate-100 text-slate-600 rounded-xl text-xs font-bold hover:bg-slate-200 transition-all">
+                          <Plus size={12} /> Añadir línea
                         </button>
                       </div>
-                      {form.items.length === 0 ? (
-                        <button type="button" onClick={addItem}
-                          className="w-full border-2 border-dashed border-slate-200 hover:border-indigo-300 rounded-xl py-5 text-sm text-slate-400 hover:text-indigo-500 transition-all">
-                          + Añadir primer producto
-                        </button>
-                      ) : (
-                        <div className="space-y-2">
-                          {form.items.map((item, idx) => (
-                            <div key={item.id} className="bg-slate-50 rounded-xl p-3 space-y-2 border border-slate-100">
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-bold text-slate-400 w-5 shrink-0">{idx+1}</span>
-                                <input value={item.descripcion} onChange={e => updItem(item.id, { descripcion: e.target.value })}
-                                  placeholder="Descripción del producto"
-                                  className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-indigo-300" />
-                                <VoiceButton small onResult={t => updItem(item.id, { descripcion: t })} />
-                                <button type="button" onClick={() => delItem(item.id)} className="p-1.5 text-slate-300 hover:text-rose-500">
-                                  <X size={14} />
-                                </button>
-                              </div>
-                              <div className="flex gap-1.5 pl-7">
-                                <input type="number" value={item.cantidad} onChange={e => updItem(item.id, { cantidad: parseFloat(e.target.value)||0 })}
-                                  placeholder="Cant." className="w-20 px-2 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-indigo-300" />
-                                <input value={item.unidad} onChange={e => updItem(item.id, { unidad: e.target.value })}
-                                  placeholder="ud" className="w-16 px-2 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-indigo-300" />
-                                <input type="number" value={item.precio_unitario} onChange={e => updItem(item.id, { precio_unitario: parseFloat(e.target.value)||0 })}
-                                  placeholder="€/ud" className="flex-1 px-2 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-indigo-300" />
-                                <select value={item.iva} onChange={e => updItem(item.id, { iva: parseInt(e.target.value) as IVARate })}
-                                  className={`px-2 py-2 rounded-lg text-xs font-semibold border-0 focus:outline-none cursor-pointer ${ivaClass(item.iva)}`}>
-                                  <option value={4}>4%</option>
-                                  <option value={10}>10%</option>
-                                  <option value={21}>21%</option>
-                                </select>
-                              </div>
-                              <div className="pl-7 text-right text-xs text-slate-500">
-                                Base: <b>{item.base.toFixed(2)} €</b> · IVA: {item.iva_amount.toFixed(2)} € · Total: <b className="text-slate-800">{item.total.toFixed(2)} €</b>
-                              </div>
-                            </div>
-                          ))}
+
+                      {form.items.length === 0 && (
+                        <div className="text-center py-8 border-2 border-dashed border-slate-200 rounded-2xl">
+                          <p className="text-sm text-slate-400 font-medium">Sin productos. Pulsa "+ Añadir línea"</p>
                         </div>
                       )}
+
+                      {form.items.map((item, idx) => (
+                        <div key={item.id} className="bg-slate-50 rounded-2xl p-3 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black text-slate-400 w-5 shrink-0">{idx + 1}</span>
+                            <div className="flex-1 flex items-center gap-2">
+                              <input
+                                value={item.descripcion}
+                                onChange={e => updItem(item.id, { descripcion: e.target.value })}
+                                placeholder="Descripción del producto"
+                                className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                              />
+                              <VoiceButton onResult={v => updItem(item.id, { descripcion: v })} small />
+                            </div>
+                            <button onClick={() => delItem(item.id)} className="p-1.5 rounded-xl text-rose-400 hover:bg-rose-50 transition-all shrink-0">
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-4 gap-2 pl-7">
+                            <input
+                              type="number" min="0" step="0.01"
+                              value={item.cantidad}
+                              onChange={e => updItem(item.id, { cantidad: parseFloat(e.target.value) || 0 })}
+                              placeholder="Cant."
+                              className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 text-right"
+                            />
+                            <select
+                              value={item.unidad}
+                              onChange={e => updItem(item.id, { unidad: e.target.value })}
+                              className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            >
+                              {['ud', 'kg', 'g', 'l', 'ml', 'caja', 'doc', 'bolsa', 'palet'].map(u => (
+                                <option key={u} value={u}>{u}</option>
+                              ))}
+                            </select>
+                            <input
+                              type="number" min="0" step="0.01"
+                              value={item.precio_unitario}
+                              onChange={e => updItem(item.id, { precio_unitario: parseFloat(e.target.value) || 0 })}
+                              placeholder="Precio"
+                              className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 text-right"
+                            />
+                            <select
+                              value={item.iva}
+                              onChange={e => updItem(item.id, { iva: parseInt(e.target.value) as IVARate })}
+                              className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                            >
+                              <option value={4}>4% IVA</option>
+                              <option value={10}>10% IVA</option>
+                              <option value={21}>21% IVA</option>
+                            </select>
+                          </div>
+                          <div className="flex justify-end pl-7">
+                            <span className="text-xs text-slate-400">= <strong className="text-slate-700">{fmtEur(item.total)}</strong></span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
 
                     {/* Notas */}
-                    <div>
-                      <label className="text-xs font-semibold text-slate-600 mb-1.5 block">Notas</label>
-                      <div className="flex gap-2">
-                        <textarea value={form.notas} onChange={e => setForm(f => ({ ...f, notas: e.target.value }))}
-                          rows={2} placeholder="Incidencias, condiciones…"
-                          className="flex-1 px-3 py-2.5 border border-slate-200 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300" />
-                        <VoiceButton onResult={t => setForm(f => ({ ...f, notas: t }))} />
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-black uppercase tracking-widest text-slate-400">Notas</label>
+                      <div className="flex items-start gap-2">
+                        <textarea
+                          value={form.notas}
+                          onChange={e => setForm(f => ({ ...f, notas: e.target.value }))}
+                          placeholder="Notas adicionales…"
+                          rows={2}
+                          className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                        />
+                        <VoiceButton onResult={v => setForm(f => ({ ...f, notas: v }))} small className="mt-1" />
                       </div>
                     </div>
 
-                    {/* Totales */}
+                    {/* Totals summary */}
                     {form.items.length > 0 && (
-                      <div className="bg-slate-900 rounded-2xl p-4 text-white space-y-1.5">
-                        <div className="flex justify-between text-sm"><span className="text-slate-400">Base imponible</span><span>{totales.base.toFixed(2)} €</span></div>
-                        <div className="flex justify-between text-sm"><span className="text-slate-400">IVA total</span><span>{totales.iva_total.toFixed(2)} €</span></div>
-                        <div className="flex justify-between font-bold text-lg border-t border-slate-700 pt-2">
-                          <span>TOTAL</span><span className="text-indigo-300">{totales.total.toFixed(2)} €</span>
+                      <div className="bg-indigo-50 rounded-2xl px-5 py-4 space-y-1.5 border border-indigo-100">
+                        <div className="flex justify-between text-sm text-indigo-600">
+                          <span>Base imponible</span><span className="font-bold">{fmtEur(totales.base)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm text-indigo-600">
+                          <span>IVA</span><span className="font-bold">{fmtEur(totales.iva_total)}</span>
+                        </div>
+                        <div className="flex justify-between text-base text-indigo-700 font-black border-t border-indigo-200 pt-1.5">
+                          <span>TOTAL</span><span>{fmtEur(totales.total)}</span>
                         </div>
                       </div>
                     )}
@@ -725,16 +1033,21 @@ Responde SOLO con JSON válido, sin markdown:
                 )}
               </div>
 
-              {/* Footer - only in manual mode */}
-              {inputMode === 'manual' && (
-                <div className="px-5 py-4 border-t border-slate-100 flex gap-3 shrink-0">
-                  <button onClick={() => { setShowForm(false); setForm(emptyForm()); }}
-                    className="flex-1 py-3 bg-slate-100 text-slate-700 font-semibold rounded-2xl text-sm">
+              {/* Footer */}
+              {(inputMode === 'manual' || editingId) && (
+                <div className="p-6 border-t border-slate-100 flex gap-3 shrink-0">
+                  <button
+                    onClick={() => { setShowForm(false); setEditingId(null); }}
+                    className="flex-1 py-3 border border-slate-200 rounded-2xl text-sm font-bold text-slate-600 hover:bg-slate-50 transition-all"
+                  >
                     Cancelar
                   </button>
-                  <button onClick={save} disabled={saving}
-                    className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold rounded-2xl text-sm flex items-center justify-center gap-2">
-                    {saving ? <><Loader2 size={15} className="animate-spin" /> Guardando…</> : <><Check size={15} /> Guardar albarán</>}
+                  <button
+                    onClick={save}
+                    disabled={saving}
+                    className="flex-1 py-3 bg-indigo-600 text-white rounded-2xl text-sm font-bold hover:bg-indigo-700 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-200"
+                  >
+                    {saving ? <><Loader2 size={16} className="animate-spin" /> Guardando…</> : <><Check size={16} /> {editingId ? 'Actualizar' : 'Guardar albarán'}</>}
                   </button>
                 </div>
               )}
@@ -742,98 +1055,6 @@ Responde SOLO con JSON válido, sin markdown:
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* ─── IA confirm modal ─────────────────────────────────────────────────── */}
-      <AnimatePresence>
-        {pending && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <motion.div
-              initial={{ y: 40, scale: 0.97 }} animate={{ y: 0, scale: 1 }} exit={{ y: 40, scale: 0.97 }}
-              className="bg-white rounded-3xl w-full max-w-md max-h-[85vh] overflow-hidden shadow-2xl flex flex-col">
-              <div className="px-5 pt-5 pb-3 border-b border-slate-100 shrink-0">
-                <div className="flex items-center gap-2.5 mb-1">
-                  <div className="w-8 h-8 rounded-xl bg-indigo-100 flex items-center justify-center shrink-0">
-                    <Sparkles size={15} className="text-indigo-600" />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-slate-900 text-sm">La IA ha extraído esto</h3>
-                    <p className="text-xs text-slate-400">Revisa antes de confirmar</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="bg-slate-50 rounded-xl p-3">
-                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Proveedor</p>
-                    <p className="font-semibold text-slate-800 text-sm">{pending.supplier_name || '—'}</p>
-                  </div>
-                  <div className="bg-slate-50 rounded-xl p-3">
-                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Fecha</p>
-                    <p className="font-semibold text-slate-800 text-sm">
-                      {pending.fecha ? new Date(pending.fecha + 'T12:00').toLocaleDateString('es-ES') : '—'}
-                    </p>
-                  </div>
-                  {pending.referencia && (
-                    <div className="bg-slate-50 rounded-xl p-3 col-span-2">
-                      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Referencia</p>
-                      <p className="font-semibold text-slate-800 text-sm">#{pending.referencia}</p>
-                    </div>
-                  )}
-                </div>
-
-                {pending.items.length > 0 && (
-                  <div>
-                    <p className="text-xs font-semibold text-slate-500 mb-2">{pending.items.length} producto(s) detectado(s)</p>
-                    <div className="space-y-1.5">
-                      {pending.items.map((item, i) => (
-                        <div key={i} className="flex items-center justify-between bg-slate-50 rounded-xl px-3 py-2.5">
-                          <div className="flex-1 min-w-0">
-                            <p className="font-medium text-slate-800 text-sm truncate">{item.descripcion}</p>
-                            <p className="text-xs text-slate-400">{item.cantidad} {item.unidad} × {item.precio_unitario.toFixed(2)} €</p>
-                          </div>
-                          <div className="text-right ml-2 shrink-0">
-                            <span className={`text-xs font-semibold px-1.5 py-0.5 rounded ${ivaClass(item.iva)}`}>IVA {item.iva}%</span>
-                            <p className="font-bold text-slate-900 text-sm mt-0.5">{item.total.toFixed(2)} €</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    {(() => {
-                      const t = calcTotals(pending.items);
-                      return (
-                        <div className="mt-2 bg-indigo-600 rounded-xl px-4 py-2.5 text-white flex justify-between items-center">
-                          <span className="text-indigo-200 text-sm">Total</span>
-                          <span className="font-bold text-lg">{t.total.toFixed(2)} €</span>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                )}
-
-                {pending.notas && (
-                  <p className="text-xs text-slate-500 bg-amber-50 rounded-xl px-3 py-2 border border-amber-100">📝 {pending.notas}</p>
-                )}
-              </div>
-
-              <div className="px-5 py-4 border-t border-slate-100 flex gap-3 shrink-0">
-                <button onClick={() => setPending(null)}
-                  className="flex-1 py-3 bg-slate-100 text-slate-700 font-semibold rounded-2xl text-sm">
-                  Descartar
-                </button>
-                <button onClick={confirmPending}
-                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-2xl text-sm flex items-center justify-center gap-2">
-                  <Check size={15} /> Confirmar y editar
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
     </div>
   );
 }
-
-export { AlbaranesView };
