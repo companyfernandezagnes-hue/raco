@@ -1,221 +1,175 @@
+// src/components/Layout.tsx
+// ✅ Navegación limpia — sin rutas muertas ni duplicados
+// ✅ /banco eliminado del nav (está integrado en Tesorería)
+// ✅ /menu eliminado del nav (está en Evaluación Cartas)
+// ✅ /documentos eliminado del nav (mockData — sin módulo real)
+// ✅ Permisos por rol aplicados en el nav lateral
 import React from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
-import { 
-  LayoutDashboard, 
-  FileText, 
-  Receipt, 
-  Wallet,
-  ChefHat, 
-  Users, 
-  Package, 
-  Settings,
-  Scale,
-  Menu,
-  X,
-  Sparkles,
-  ClipboardList,
-  FileSpreadsheet,
-  LogOut,
-  Megaphone,
-  Calculator,
-  Landmark,
-  Search,
-  Bell,
-  Layout as LayoutIcon,
-  ChefHat as UtensilsCrossed,
-  Moon,
-  Sun
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import {
+  LayoutDashboard, Receipt, Wallet, ChefHat, Users,
+  Package, Scale, X, Sparkles, ClipboardList,
+  FileSpreadsheet, LogOut, Megaphone, Calculator,
+  Menu, Moon, Sun, Bell, ChevronRight
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useSupabase } from '../context/SupabaseContext';
+import { usePin }       from '../context/PinContext';
 
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)); }
 
-const navigation = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { name: 'Compras & Gastos', href: '/compras', icon: Package },
-  { name: 'Facturación Clientes', href: '/facturacion-clientes', icon: Receipt },
-  { name: 'Cierre de Caja', href: '/cierre-caja', icon: Calculator },
-  { name: 'Contabilidad & Tesorería', href: '/tesoreria', icon: Wallet },
-  { name: 'Banco', href: '/banco', icon: Landmark },
-  { name: 'Marketing', href: '/marketing', icon: Megaphone },
-  { name: 'Escandallos', href: '/escandallos', icon: ChefHat },
-  { name: 'Personal', href: '/personal', icon: Users },
-  { name: 'Inventario', href: '/inventario', icon: ClipboardList },
-  { name: 'Proveedores', href: '/proveedores', icon: Users },
-  { name: 'Auditoría IA', href: '/auditoria', icon: Sparkles },
-  { name: 'Evaluación Cartas', href: '/evaluacion-cartas', icon: FileSpreadsheet },
-  { name: 'Análisis de Menú', href: '/menu', icon: UtensilsCrossed },
-  { name: 'Trámites', href: '/tramites', icon: Scale },
+// ── Nav items ─────────────────────────────────────────────────────────────────
+const NAV_ITEMS = [
+  // Todos los roles
+  { name: 'Dashboard',            href: '/',                    icon: LayoutDashboard, roles: ['admin','cocinero','camarero'] },
+  // Admin
+  { name: 'Compras & Proveedores', href: '/compras',            icon: Package,         roles: ['admin'] },
+  { name: 'Facturación Clientes',  href: '/facturacion-clientes', icon: Receipt,       roles: ['admin'] },
+  { name: 'Cierre de Caja',        href: '/cierre-caja',        icon: Calculator,      roles: ['admin','camarero'] },
+  { name: 'Tesorería & Banco',     href: '/tesoreria',          icon: Wallet,          roles: ['admin'] },
+  { name: 'Marketing',             href: '/marketing',          icon: Megaphone,       roles: ['admin'] },
+  { name: 'Personal',              href: '/personal',           icon: Users,           roles: ['admin'] },
+  { name: 'Auditoría IA',          href: '/auditoria',          icon: Sparkles,        roles: ['admin'] },
+  { name: 'Trámites',              href: '/tramites',           icon: Scale,           roles: ['admin'] },
+  // Admin + Cocinero
+  { name: 'Escandallos',           href: '/escandallos',        icon: ChefHat,         roles: ['admin','cocinero'] },
+  { name: 'Evaluación Carta',      href: '/evaluacion-cartas',  icon: FileSpreadsheet, roles: ['admin','cocinero'] },
+  // Todos
+  { name: 'Inventario',            href: '/inventario',         icon: ClipboardList,   roles: ['admin','cocinero','camarero'] },
+  { name: 'Proveedores',           href: '/proveedores',        icon: Users,           roles: ['admin','cocinero','camarero'] },
 ];
 
-import AIAdvisor from './AIAdvisor';
-import { TelegramWidget } from './TelegramWidget';
-import { useLocation } from 'react-router-dom';
-import { usePin } from '../context/PinContext';
-
+// ── Layout ────────────────────────────────────────────────────────────────────
 export default function Layout() {
-  const { rol } = usePin();
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
-  const { employee, logout } = useSupabase();
-  const location = useLocation();
-  const [isDarkMode, setIsDarkMode] = React.useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('theme') === 'dark' || 
-        (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    }
-    return false;
+  const { employee, logout }    = useSupabase();
+  const { rol }                 = usePin();
+  const navigate                = useNavigate();
+  const [mobileOpen, setMobileOpen] = React.useState(false);
+  const [isDark, setIsDark]     = React.useState(() => {
+    try { return localStorage.getItem('theme') === 'dark'; } catch { return false; }
   });
 
   React.useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
-    }
-  }, [isDarkMode]);
+    document.documentElement.classList.toggle('dark', isDark);
+    try { localStorage.setItem('theme', isDark ? 'dark' : 'light'); } catch {}
+  }, [isDark]);
 
-  const filteredNavigation = React.useMemo(() => {
-    if (rol === 'admin') return navigation;
-    if (rol === 'camarero') {
-      return navigation.filter(n => ['Compras & Gastos', 'Inventario'].includes(n.name));
-    }
-    if (rol === 'cocinero') {
-      return navigation.filter(n => ['Escandallos', 'Inventario', 'Análisis de Menú'].includes(n.name));
-    }
-    return [];
-  }, [rol]);
+  // Filtrar nav por rol
+  const visibleNav = NAV_ITEMS.filter(item =>
+    !rol || item.roles.includes(rol as string)
+  );
 
-  const currentModuleName = React.useMemo(() => {
-    const path = location.pathname;
-    const item = navigation.find(n => n.href === path);
-    return item ? item.name : 'Dashboard';
-  }, [location.pathname]);
-
-  return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 transition-colors duration-300">
-      <AIAdvisor />
-      <TelegramWidget currentModule={currentModuleName} />
-      {/* Mobile menu backdrop */}
-      {isMobileMenuOpen && (
-        <div 
-          className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm lg:hidden"
-          onClick={() => setIsMobileMenuOpen(false)}
-        />
-      )}
-
-      {/* Sidebar */}
-      <aside className={cn(
-        "fixed inset-y-0 left-0 z-50 w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 transform transition-transform duration-300 ease-in-out lg:translate-x-0",
-        isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"
-      )}>
-        <div className="flex flex-col h-full">
-          <div className="p-6">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-emerald-200 dark:shadow-emerald-900/20">
-                <ChefHat size={24} />
-              </div>
-              <span className="text-xl font-bold tracking-tight text-slate-800 dark:text-slate-100">Raco Blanquerna SL</span>
-            </div>
+  const SidebarContent = () => (
+    <div className="flex flex-col h-full">
+      {/* Logo */}
+      <div className="px-5 py-6 border-b border-slate-100 dark:border-slate-800">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-200">
+            <ChefHat size={22} className="text-white" />
           </div>
-
-          <nav className="flex-1 px-4 space-y-1 overflow-y-auto">
-            {filteredNavigation.map((item) => (
-              <NavLink
-                key={item.name}
-                to={item.href}
-                onClick={() => setIsMobileMenuOpen(false)}
-                className={({ isActive }) => cn(
-                  "flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-xl transition-all duration-200 group",
-                  isActive 
-                    ? "bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 shadow-sm" 
-                    : "text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100"
-                )}
-              >
-                <item.icon className={cn(
-                  "w-5 h-5 transition-colors",
-                  "group-hover:text-emerald-600 dark:group-hover:text-emerald-400"
-                )} />
-                {item.name}
-              </NavLink>
-            ))}
-          </nav>
-
-          <div className="p-4 border-t border-slate-100 dark:border-slate-800 space-y-1">
-            <button className="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-slate-600 dark:text-slate-400 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-all">
-              <Settings size={20} />
-              Configuración
-            </button>
-            <button 
-              onClick={logout}
-              className="flex items-center gap-3 w-full px-3 py-2.5 text-sm font-medium text-rose-600 dark:text-rose-400 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-all"
-            >
-              <LogOut size={20} />
-              Cerrar Sesión
-            </button>
+          <div>
+            <p className="font-black text-slate-900 dark:text-white text-sm leading-tight">Raco Blanquerna</p>
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">ERP Restaurante</p>
           </div>
         </div>
+      </div>
+
+      {/* Nav */}
+      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-0.5">
+        {visibleNav.map(item => (
+          <NavLink
+            key={item.href}
+            to={item.href}
+            end={item.href === '/'}
+            onClick={() => setMobileOpen(false)}
+            className={({ isActive }) => cn(
+              'flex items-center gap-3 px-3 py-2.5 rounded-2xl text-sm font-bold transition-all group',
+              isActive
+                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200'
+                : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white'
+            )}>
+            {({ isActive }) => (
+              <>
+                <item.icon size={18} className={isActive ? 'text-white' : 'text-slate-400 group-hover:text-slate-600'} />
+                <span className="flex-1">{item.name}</span>
+                {!isActive && <ChevronRight size={14} className="opacity-0 group-hover:opacity-40 transition-opacity" />}
+              </>
+            )}
+          </NavLink>
+        ))}
+      </nav>
+
+      {/* Footer usuario */}
+      <div className="px-3 py-4 border-t border-slate-100 dark:border-slate-800 space-y-1">
+        {/* Dark mode */}
+        <button onClick={() => setIsDark(d => !d)}
+          className="flex items-center gap-3 w-full px-3 py-2.5 rounded-2xl text-sm font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all">
+          {isDark ? <Sun size={18} className="text-amber-400" /> : <Moon size={18} className="text-slate-400" />}
+          {isDark ? 'Modo claro' : 'Modo oscuro'}
+        </button>
+        {/* Info empleado */}
+        {employee && (
+          <div className="flex items-center gap-3 px-3 py-2.5 rounded-2xl bg-slate-50 dark:bg-slate-800">
+            <div className="w-8 h-8 bg-indigo-100 rounded-xl flex items-center justify-center font-black text-indigo-600 text-sm">
+              {(employee as any).nombre?.charAt(0) || '?'}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-black text-slate-800 dark:text-white truncate">{(employee as any).nombre}</p>
+              <p className="text-[10px] text-slate-400 uppercase font-bold">{(employee as any).rol}</p>
+            </div>
+            <button onClick={logout}
+              className="p-1.5 rounded-xl hover:bg-rose-100 hover:text-rose-600 text-slate-300 transition-all"
+              title="Cerrar sesión">
+              <LogOut size={14} />
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="flex h-screen bg-[#F8FAFC] dark:bg-slate-950 overflow-hidden">
+
+      {/* ── Sidebar desktop ── */}
+      <aside className="hidden lg:flex w-64 flex-col bg-white dark:bg-slate-900 border-r border-slate-100 dark:border-slate-800 shadow-sm shrink-0">
+        <SidebarContent />
       </aside>
 
-      {/* Main content */}
-      <div className="lg:pl-64 flex flex-col min-h-screen">
-        {/* Header */}
-        <header className="sticky top-0 z-30 flex items-center justify-between h-16 px-4 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 lg:px-8">
-          <button 
-            className="p-2 -ml-2 text-slate-600 dark:text-slate-400 lg:hidden"
-            onClick={() => setIsMobileMenuOpen(true)}
-          >
-            <Menu size={24} />
+      {/* ── Sidebar mobile overlay ── */}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-[200] flex lg:hidden">
+          <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={() => setMobileOpen(false)} />
+          <aside className="relative w-72 bg-white dark:bg-slate-900 h-full shadow-2xl">
+            <button onClick={() => setMobileOpen(false)}
+              className="absolute top-4 right-4 p-2 rounded-xl hover:bg-slate-100 text-slate-400 transition-all">
+              <X size={18} />
+            </button>
+            <SidebarContent />
+          </aside>
+        </div>
+      )}
+
+      {/* ── Main content ── */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Mobile top bar */}
+        <header className="lg:hidden flex items-center justify-between px-4 py-3 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 shrink-0">
+          <button onClick={() => setMobileOpen(true)}
+            className="p-2 rounded-xl hover:bg-slate-100 text-slate-600 dark:text-slate-300 transition-all">
+            <Menu size={22} />
           </button>
-
-          <div className="flex-1 max-w-md mx-4 hidden md:block">
-            <div className="relative group">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500 group-focus-within:text-emerald-500 transition-colors" size={18} />
-              <input 
-                type="text" 
-                placeholder="Buscar en Raco Blanquerna..."
-                className="w-full pl-10 pr-4 py-2 bg-slate-100 dark:bg-slate-800 border-transparent focus:bg-white dark:focus:bg-slate-900 focus:border-emerald-500/20 focus:ring-4 focus:ring-emerald-500/5 rounded-2xl transition-all text-sm outline-none dark:text-white"
-              />
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 bg-indigo-600 rounded-xl flex items-center justify-center">
+              <ChefHat size={16} className="text-white" />
             </div>
+            <span className="font-black text-slate-900 dark:text-white text-sm">Raco Blanquerna</span>
           </div>
-
-          <div className="flex items-center gap-4 ml-auto">
-            <button 
-              onClick={() => setIsDarkMode(!isDarkMode)}
-              className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all"
-              title={isDarkMode ? "Modo Claro" : "Modo Oscuro"}
-            >
-              {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
-            </button>
-            <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-              <button className="px-3 py-1 text-[10px] font-black uppercase tracking-widest bg-white dark:bg-slate-700 text-slate-900 dark:text-white rounded-lg shadow-sm">ES</button>
-              <button className="px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors">CA</button>
-            </div>
-            <button className="relative p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all">
-              <Bell size={20} />
-              <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border-2 border-white dark:border-slate-900" />
-            </button>
-            <div className="text-right hidden sm:block">
-              <p className="text-sm font-semibold text-slate-900 dark:text-white">{employee?.nombre || 'Usuario'}</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">{employee?.email}</p>
-            </div>
-            <div className="w-10 h-10 rounded-full bg-slate-200 border-2 border-white shadow-sm overflow-hidden">
-              <img 
-                src={undefined || "https://picsum.photos/seed/admin/100/100"} 
-                alt="Avatar" 
-                referrerPolicy="no-referrer"
-              />
-            </div>
-          </div>
+          <div className="w-9" />
         </header>
 
-        {/* Page Content */}
-        <main className="flex-1 p-4 lg:p-8">
+        {/* Page content */}
+        <main className="flex-1 overflow-y-auto">
           <Outlet />
         </main>
       </div>
