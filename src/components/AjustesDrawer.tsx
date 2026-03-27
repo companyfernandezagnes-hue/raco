@@ -206,7 +206,7 @@ function TabAccesos() {
       )}
     </div>
   );
-}antes de reiniciar, muéstrame: 1) cómo está implementada la función _sync_calendar completa, 2) qué pasa cuando n8n no responde (manejo de errores), 3) si hay algún test que podamos hacer para verificar que el webhook de n8n está activo sin reiniciar el bot
+}
 
 function TabBackup() {
   const [loading, setLoading] = useState(false);
