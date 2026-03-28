@@ -38,7 +38,7 @@ const ROLE_PERMISSIONS: Record<EmployeeRol, string[]> = {
     '/', '/escandallos', '/evaluacion-cartas',
     '/inventario', '/compras', '/proveedores',
   ],
-  camarero: ['/', '/inventario', '/proveedores', '/cierre-caja'],
+  camarero: ['/', '/inventario', '/proveedores', '/cierre-caja'],  encargado_cocina: ['/', '/escandallos', '/evaluacion-cartas', '/inventario', '/compras', '/proveedores', '/personal'],
 };
 
 function hasAccess(rol: EmployeeRol, path: string): boolean {
