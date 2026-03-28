@@ -6,13 +6,14 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // Tipos del empleado segun la tabla employees
-export type EmployeeRol = 'admin' | 'cocinero' | 'camarero';
+export type EmployeeRol = 'admin' | 'cocinero' | 'camarero' | 'encargado_cocina' | 'encargado_sala';
 
 export interface Employee {
   id: string;
   nombre: string;
   email: string;
   rol: EmployeeRol;
+    pin?: string;
   activo: boolean;
   creado_por: string | null;
   created_at: string;
