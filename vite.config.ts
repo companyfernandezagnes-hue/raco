@@ -21,5 +21,24 @@ export default defineConfig(({mode}) => {
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
     },
+    build: {
+      // Subimos el aviso a 700 kB y sacamos las libs grandes a chunks separados
+      // para mejorar la carga inicial y aprovechar caché del navegador.
+      chunkSizeWarningLimit: 700,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'react-vendor':   ['react', 'react-dom', 'react-router-dom'],
+            'supabase':       ['@supabase/supabase-js'],
+            'firebase':       ['firebase/app', 'firebase/auth', 'firebase/firestore'],
+            'charts':         ['recharts'],
+            'motion':         ['motion', 'framer-motion'],
+            'ai':             ['@google/genai'],
+            'icons':          ['lucide-react'],
+            'xlsx':           ['xlsx'],
+          },
+        },
+      },
+    },
   };
 });
