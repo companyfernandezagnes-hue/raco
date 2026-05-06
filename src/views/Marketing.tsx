@@ -244,19 +244,22 @@ export default function MarketingView() {
   const [expandedBrief, setExpandedBrief] = useState<string|null>(null);
 
   // Forms
-  const emptyCampaign = () => ({
-    name:'', description:'', type:'festivo', status:'borrador' as const,
-    platforms:[] as string[], start_date:today(), end_date:'',
+  type CampaignForm = Omit<Campaign,'id'|'ai_brief'|'ai_copy'|'description'|'end_date'|'linked_event'> & { description: string; end_date: string; linked_event: string };
+  type CalendarEventForm = Omit<CalendarEvent,'id'|'all_day'|'campaign_id'|'google_event_id'> & { end_date: string; description: string };
+
+  const emptyCampaign = (): CampaignForm => ({
+    name:'', description:'', type:'festivo', status:'borrador',
+    platforms:[], start_date:today(), end_date:'',
     budget:0, spent:0, reach:0, impressions:0, clicks:0, conversions:0,
     revenue_attr:0, linked_event:'', color:'#6366f1',
   });
-  const [campForm, setCampForm] = useState(emptyCampaign());
+  const [campForm, setCampForm] = useState<CampaignForm>(emptyCampaign());
 
-  const emptyEvent = () => ({
-    title:'', date:selectedDay||today(), end_date:'', type:'evento_propio' as const,
+  const emptyEvent = (): CalendarEventForm => ({
+    title:'', date:selectedDay||today(), end_date:'', type:'evento_propio',
     description:'', color:'#8b5cf6',
   });
-  const [eventForm, setEventForm] = useState(emptyEvent());
+  const [eventForm, setEventForm] = useState<CalendarEventForm>(emptyEvent());
 
   // ── Load ──────────────────────────────────────────────────────────────────
   const loadAll = useCallback(async()=>{
@@ -739,7 +742,7 @@ Sé específico, creativo y orientado a restaurante de Palma de Mallorca. Tono m
                         className="text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 focus:outline-none">
                         {Object.entries(STATUS_CONFIG).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
                       </select>
-                      <button onClick={()=>{setCampForm({...camp,end_date:camp.end_date||''});setEditCampaign(camp);setShowCampaignForm(true);}}
+                      <button onClick={()=>{setCampForm({...camp,description:camp.description||'',end_date:camp.end_date||'',linked_event:camp.linked_event||''});setEditCampaign(camp);setShowCampaignForm(true);}}
                         className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition-all">
                         <Edit2 size={14}/>
                       </button>

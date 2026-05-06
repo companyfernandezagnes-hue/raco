@@ -188,7 +188,7 @@ export default function DashboardView() {
         supabase.from('cash_closings').select('total_sales').eq('date', yesterdayStr),
         supabase.from('stock_items').select('current_stock,min_stock,price_per_unit,active').eq('active', true),
         supabase.from('staff_profiles').select('id,status').order('name'),
-        supabase.from('time_entries').select('staff_id,clock_in,clock_out').eq('date', todayStr).order('clock_in', { ascending: false }),
+        supabase.from('time_entries').select('id,staff_id,clock_in,clock_out').eq('date', todayStr).order('clock_in', { ascending: false }),
         supabase.from('vacations').select('id').eq('status', 'Solicitada'),
         supabase.from('customer_invoices').select('status,total,date').gte('date', monthStart),
         supabase.from('delivery_notes').select('supplier_name,total,fecha,estado').order('created_at', { ascending: false }).limit(5),

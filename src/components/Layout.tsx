@@ -44,7 +44,7 @@ const NAV_ITEMS = [
 
 export default function Layout() {
   const { employee, logout } = useSupabase();
-  const { clearPin }         = usePin();
+  const { resetPin }         = usePin();
   const navigate             = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [ajustesOpen, setAjustesOpen] = useState(false);
@@ -54,7 +54,7 @@ export default function Layout() {
   const isAdmin = rol === 'admin';
 
   async function handleLogout() {
-    clearPin();
+    resetPin();
     await logout();
     navigate('/');
   }

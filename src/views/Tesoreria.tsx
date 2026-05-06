@@ -377,8 +377,9 @@ export default function TesoreriaView() {
   const [bankSaving,setBankSaving]=useState(false);
   const [newBalance,setNewBalance]=useState(0);
 
-  const emptyEntry=()=>({type:'Ingreso' as const,category:'',description:'',amount:0,payment_method:'Efectivo',reference:'',date:today(),reconciled:false});
-  const [entryForm,setEntryForm]=useState(emptyEntry());
+  type EntryForm = { type:'Ingreso'|'Gasto'; category:string; description:string; amount:number; payment_method:string; reference:string; date:string; reconciled:boolean };
+  const emptyEntry=():EntryForm=>({type:'Ingreso',category:'',description:'',amount:0,payment_method:'Efectivo',reference:'',date:today(),reconciled:false});
+  const [entryForm,setEntryForm]=useState<EntryForm>(emptyEntry());
   const [bankForm,setBankForm]=useState({name:'',bank_name:'CaixaBank',account_number:'',balance:0});
 
   // Load

@@ -32,7 +32,7 @@ export default function BancoView() {
   const [activeTab, setActiveTab] = React.useState<'Movimientos' | 'Libro Diario'>('Movimientos');
 
   const transactions = data.bankTransactions || [];
-  const balance = data.bankBalance || 0;
+  const balance = transactions.reduce((acc, t) => acc + t.amount, 0);
 
   const categories = Array.from(new Set(transactions.map(t => t.category).filter(Boolean))) as string[];
   if (categories.length === 0) categories.push('Ventas', 'Suministros', 'Personal', 'Impuestos', 'Caja');

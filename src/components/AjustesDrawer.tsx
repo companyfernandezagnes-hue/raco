@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Users, Download, Bell, Calculator, Landmark, Receipt, Clock, Plug, Settings, Plus, Trash2, KeyRound, Save, CheckCircle, Lock, Mail } from 'lucide-react';
 import { supabase } from '../supabase';
 
-interface StaffProfile { id: string; nombre: string;role: string; activo: boolean; email?: string; pin_hash?: string; }
+interface StaffProfile { id: string; nombre: string; rol: string; activo: boolean; email?: string; pin_hash?: string; }
 interface BankAccount { id: string; nombre: string; iban: string; banco: string; saldo_inicial: number; }
 interface FixedExpense { id: string; nombre: string; importe: number; frecuencia: string; categoria: string; }
 interface HorarioDia { abierto: boolean; apertura: string; cierre: string; }
@@ -86,7 +86,7 @@ function TabEquipo() {
   async function addEmpleado() {
     if (!newNombre.trim()) return;
     setSaving(true);
-    const insertData: Record<string, unknown> = { nombre: newNombre.trim(), role: newRol, activo: true };
+    const insertData: Record<string, unknown> = { nombre: newNombre.trim(), rol: newRol, activo: true };
     if (newEmail.trim()) insertData.email = newEmail.trim().toLowerCase();
     await supabase.from('staff_profiles').insert(insertData);
     if (newEmail.trim()) {
@@ -118,7 +118,7 @@ function TabEquipo() {
             <div key={s.id} className="flex items-center gap-2 p-2 bg-slate-50 rounded-xl">
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-bold text-slate-900 truncate">{s.nombre}</p>
-                <p className="text-[10px] text-slate-400 capitalize">{s.role}{s.email ? ' · ' + s.email : ''}</p>
+                <p className="text-[10px] text-slate-400 capitalize">{s.rol}{s.email ? ' · ' + s.email : ''}</p>
               </div>
               <button onClick={() => toggleActivo(s.id, s.activo)} className={`text-[10px] font-bold px-2 py-0.5 rounded-xl transition-all ${s.activo ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}`}>{s.activo ? 'Activo' : 'Inactivo'}</button>
               {s.email && <button onClick={() => enviarMagicLink(s.email!)} title="Enviar magic link de acceso" className="p-1 rounded-xl hover:bg-indigo-50 text-slate-400 hover:text-indigo-600 transition-all"><Mail size={13} /></button>}
@@ -193,7 +193,7 @@ function TabAccesos() {
               <div className="flex items-center gap-2 mb-1.5">
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-bold text-slate-900">{s.nombre}</p>
-                  <p className="text-[10px] text-slate-400 capitalize">{s.role}{s.email ? ' · ' + s.email : ' · sin email'}</p>
+                  <p className="text-[10px] text-slate-400 capitalize">{s.rol}{s.email ? ' · ' + s.email : ' · sin email'}</p>
                 </div>
                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-lg ${s.pin_hash ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}`}>{s.pin_hash ? 'PIN ok' : 'Sin PIN'}</span>
               </div>

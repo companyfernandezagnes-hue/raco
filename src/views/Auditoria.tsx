@@ -14,10 +14,11 @@
 // ✅ Gen Z UX, toast notifications
 import React, { useState, useCallback, useMemo } from 'react';
 import {
-  Sparkles, BrainCircuit, Loader2, AlertTriangle, CheckCircle2,
+  Sparkles, BrainCircuit, Brain, Loader2, AlertTriangle, CheckCircle2,
   TrendingUp, TrendingDown, Users, Package, Receipt, Wallet,
   ChefHat, Activity, Zap, Download, RefreshCw, X,
-  AlertCircle, ArrowRight, Eye, DollarSign, Clock
+  AlertCircle, ArrowRight, Eye, DollarSign, Clock,
+  ChevronUp, ChevronDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../supabase';

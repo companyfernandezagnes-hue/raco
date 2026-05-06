@@ -11,7 +11,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   FileSpreadsheet, Loader2, Brain, TrendingUp, TrendingDown,
   Star, Download, RefreshCw, AlertTriangle, CheckCircle2,
-  ChevronDown, ChevronUp, Zap, X, BarChart3, Tag, Edit2
+  ChevronDown, ChevronUp, Zap, X, BarChart3, Tag, Edit2, Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../supabase';

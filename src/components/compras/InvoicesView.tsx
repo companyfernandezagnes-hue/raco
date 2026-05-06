@@ -192,15 +192,24 @@ export const InvoicesView = ({ onStatsChange }: { onStatsChange?: () => void }) 
   const [linkerFacturaId, setLinkerFacturaId] = useState<string | null>(null);
   const [selectedAlbIds, setSelectedAlbIds] = useState<string[]>([]);
 
-  const emptyForm = () => ({
-    tipo: 'compra' as const, num: '', fecha: today(), fecha_venc: '',
+  type FacturaForm = {
+    tipo: 'compra' | 'venta' | 'caja';
+    num: string; fecha: string; fecha_venc: string;
+    proveedor: string; cliente: string;
+    total: number; base: number; impuesto: number;
+    albaran_ids: string[]; pagada: boolean;
+    categoria: string; origen: Origen; estado: EstadoFactura;
+    unidad_negocio: BusinessUnit; archivo_b64: string;
+  };
+  const emptyForm = (): FacturaForm => ({
+    tipo: 'compra', num: '', fecha: today(), fecha_venc: '',
     proveedor: '', cliente: '', total: 0, base: 0, impuesto: 0,
-    albaran_ids: [] as string[], pagada: false,
-    categoria: '', origen: 'manual-group' as Origen,
-    estado: 'draft' as EstadoFactura, unidad_negocio: 'REST' as BusinessUnit,
+    albaran_ids: [], pagada: false,
+    categoria: '', origen: 'manual-group',
+    estado: 'draft', unidad_negocio: 'REST',
     archivo_b64: '',
   });
-  const [form, setForm] = useState(emptyForm());
+  const [form, setForm] = useState<FacturaForm>(emptyForm());
 
   // ── Load ──────────────────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {

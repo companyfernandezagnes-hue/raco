@@ -38,7 +38,9 @@ const ROLE_PERMISSIONS: Record<EmployeeRol, string[]> = {
     '/', '/escandallos', '/evaluacion-cartas',
     '/inventario', '/compras', '/proveedores',
   ],
-  camarero: ['/', '/inventario', '/proveedores', '/cierre-caja'],  encargado_cocina: ['/', '/escandallos', '/evaluacion-cartas', '/inventario', '/compras', '/proveedores', '/personal'],
+  camarero: ['/', '/inventario', '/proveedores', '/cierre-caja'],
+  encargado_cocina: ['/', '/escandallos', '/evaluacion-cartas', '/inventario', '/compras', '/proveedores', '/personal'],
+  encargado_sala: ['/', '/inventario', '/proveedores', '/cierre-caja', '/facturacion-clientes', '/personal'],
 };
 
 function hasAccess(rol: EmployeeRol, path: string): boolean {
@@ -48,10 +50,13 @@ function hasAccess(rol: EmployeeRol, path: string): boolean {
 }
 
 // ── Error Boundary ────────────────────────────────────────────────────────────
-class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: any }> {
-  state = { hasError: false, error: null };
-  static getDerivedStateFromError(error: any) { return { hasError: true, error }; }
-  componentDidCatch(error: any, info: any) { console.error('ErrorBoundary:', error, info); }
+interface ErrorBoundaryProps { children: ReactNode }
+interface ErrorBoundaryState { hasError: boolean; error: Error | null }
+
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { hasError: false, error: null };
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState { return { hasError: true, error }; }
+  componentDidCatch(error: Error, info: React.ErrorInfo) { console.error('ErrorBoundary:', error, info); }
   render() {
     if (!this.state.hasError) return this.props.children;
     return (
