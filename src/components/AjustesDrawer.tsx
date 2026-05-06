@@ -131,10 +131,11 @@ function TabEquipo() {
         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Anadir empleado</p>
         <input value={newNombre} onChange={e => setNewNombre(e.target.value)} placeholder="Nombre completo" className="w-full text-xs px-2 py-1.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-300" />
         <input value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="Email (para acceso con magic link)" type="email" className="w-full text-xs px-2 py-1.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-300" />
-setNewNombre('');
-setNewNombre('');
-            setNewEmail('');
-            setNewPin('');if (newPin.trim().length === 4) insertData.pin_hash = newPin.trim();<input value={newPin} onChange={e => setNewPin(e.target.value.replace(/\D/g, ''))} placeholder="PIN (4 digitos)" maxLength={4} inputMode="numeric" className="w-full text-xs px-2 py-1.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-300 tracking-widest text-center font-bold" />
+        <select value={newRol} onChange={e => setNewRol(e.target.value)} className="w-full text-xs px-2 py-1.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
+          <option value="admin">Admin</option>
+          <option value="encargado_cocina">Encargado cocina</option>
+          <option value="cocinero">Cocinero</option>
+          <option value="camarero">Camarero</option>
         </select>
         <button onClick={addEmpleado} disabled={saving} className="w-full flex items-center justify-center gap-1 text-xs font-bold py-1.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all disabled:opacity-50">
           <Plus size={13} /> Anadir{newEmail ? ' y enviar magic link' : ''}
