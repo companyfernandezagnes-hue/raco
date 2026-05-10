@@ -3,6 +3,7 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: ["main"]
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -25,6 +26,20 @@ jobs:
       - name: Install dependencies
         run: npm install
       - name: Build
+        # Las claves de IA se inyectan desde GitHub Secrets como variables
+        # VITE_* (las consume Vite en build time). Si una secret no está
+        # configurada, queda vacía — la usuaria puede pegar la clave en
+        # Ajustes → IA y se guarda en localStorage del navegador.
+        env:
+          VITE_ANTHROPIC_API_KEY: ${{ secrets.VITE_ANTHROPIC_API_KEY }}
+          VITE_GEMINI_API_KEY:    ${{ secrets.VITE_GEMINI_API_KEY }}
+          VITE_GROQ_API_KEY:      ${{ secrets.VITE_GROQ_API_KEY }}
+          VITE_CEREBRAS_API_KEY:  ${{ secrets.VITE_CEREBRAS_API_KEY }}
+          VITE_DEEPSEEK_API_KEY:  ${{ secrets.VITE_DEEPSEEK_API_KEY }}
+          VITE_MISTRAL_API_KEY:   ${{ secrets.VITE_MISTRAL_API_KEY }}
+          VITE_ZAI_API_KEY:       ${{ secrets.VITE_ZAI_API_KEY }}
+          # Legacy compat (algunos archivos usan import.meta.env.GEMINI_API_KEY directo)
+          GEMINI_API_KEY:         ${{ secrets.VITE_GEMINI_API_KEY }}
         run: npm run build
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
