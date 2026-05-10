@@ -1,43 +1,15 @@
 // src/services/aiService.ts
-// Servicio unificado de IA: prefiere Anthropic Claude, cae a Google Gemini.
-// Detecta proveedor en runtime según las env vars que estén disponibles.
+// Compat shim sobre aiProviders.ts.
+// Mantiene la API que usaban componentes antiguos (aiText, aiVision, aiJSON,
+// getAIAdvice) pero delega en el motor multi-proveedor con fallback automático.
 //
-// Variables (configurar en .env.local o en GitHub Secrets para CI):
-//   VITE_ANTHROPIC_API_KEY   — clave de Anthropic Claude (recomendado)
-//   VITE_GEMINI_API_KEY      — clave de Google Gemini (fallback / visión rápida)
-//
-// IMPORTANTE: Las claves van directamente en el bundle del navegador
-// (dangerouslyAllowBrowser). Esto es aceptable para una app INTERNA con login,
-// pero NO la expongas en un site público. Para producción de cara al cliente,
-// mueve estas llamadas a una Edge Function de Supabase.
+// El motor real está en aiProviders.ts y soporta:
+//   Claude → Cerebras → DeepSeek → Groq → Mistral → Gemini (fallback chat)
+//   Z.AI → Claude → Gemini → Mistral → Groq (fallback visión)
 
-import Anthropic from '@anthropic-ai/sdk';
-import { GoogleGenAI } from '@google/genai';
+import { askAI, scanBase64, parseJSON, type ChatMessage, type AIProvider } from './aiProviders';
 
-type Provider = 'claude' | 'gemini';
-
-const ANTHROPIC_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY as string | undefined;
-const GEMINI_KEY    = import.meta.env.VITE_GEMINI_API_KEY    as string | undefined;
-
-let _anthropic: Anthropic | null = null;
-function anthropic(): Anthropic | null {
-  if (!ANTHROPIC_KEY) return null;
-  if (!_anthropic) _anthropic = new Anthropic({ apiKey: ANTHROPIC_KEY, dangerouslyAllowBrowser: true });
-  return _anthropic;
-}
-
-let _gemini: GoogleGenAI | null = null;
-function gemini(): GoogleGenAI | null {
-  if (!GEMINI_KEY) return null;
-  if (!_gemini) _gemini = new GoogleGenAI({ apiKey: GEMINI_KEY });
-  return _gemini;
-}
-
-export function preferredProvider(): Provider | null {
-  if (ANTHROPIC_KEY) return 'claude';
-  if (GEMINI_KEY)    return 'gemini';
-  return null;
-}
+type Provider = AIProvider;
 
 export interface AIError { message: string; provider: Provider | null }
 export type AIOk<T>  = { ok: true;  provider: Provider; data: T };
@@ -50,41 +22,16 @@ export async function aiText(opts: {
   system?: string;
   maxTokens?: number;
   temperature?: number;
-  forceProvider?: Provider;
 }): Promise<AIResult<string>> {
-  const provider = opts.forceProvider ?? preferredProvider();
-  if (!provider) {
-    return { ok: false, error: { message: 'No hay clave de IA configurada (VITE_ANTHROPIC_API_KEY o VITE_GEMINI_API_KEY).', provider: null } };
-  }
-
   try {
-    if (provider === 'claude') {
-      const a = anthropic()!;
-      const resp = await a.messages.create({
-        model: 'claude-sonnet-4-5',
-        max_tokens: opts.maxTokens ?? 1024,
-        temperature: opts.temperature ?? 0.7,
-        system: opts.system ?? 'Eres un asesor experto en gestión de restaurantes (metodología Mise en Place, ingeniería de menú BCG, control de costes). Respuestas en español, prácticas y accionables.',
-        messages: [{ role: 'user', content: opts.prompt }],
-      });
-      const text = resp.content
-        .filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text')
-        .map(b => b.text)
-        .join('\n');
-      return { ok: true, provider: 'claude', data: text };
-    }
-
-    // gemini
-    const g = gemini()!;
-    const resp = await g.models.generateContent({
-      model: 'gemini-2.0-flash',
-      contents: [
-        { role: 'user', parts: [{ text: (opts.system ? opts.system + '\n\n' : '') + opts.prompt }] },
-      ],
-    });
-    return { ok: true, provider: 'gemini', data: resp.text || '' };
+    const messages: ChatMessage[] = [{ role: 'user', content: opts.prompt }];
+    const result = await askAI(
+      messages,
+      opts.system ?? 'Eres un asesor experto en gestión de restaurantes (Mise en Place, ingeniería de menú BCG, control de costes). Respuestas en español, prácticas y accionables.',
+    );
+    return { ok: true, provider: result.provider, data: result.text };
   } catch (err: any) {
-    return { ok: false, error: { message: err?.message || 'Error de IA', provider } };
+    return { ok: false, error: { message: err?.message || 'Error de IA', provider: null } };
   }
 }
 
@@ -93,49 +40,17 @@ export async function aiVision(opts: {
   prompt: string;
   imageBase64: string;
   mimeType: string;
-  forceProvider?: Provider;
 }): Promise<AIResult<string>> {
-  const provider = opts.forceProvider ?? preferredProvider();
-  if (!provider) {
-    return { ok: false, error: { message: 'No hay clave de IA configurada.', provider: null } };
-  }
-
   try {
-    if (provider === 'claude') {
-      const a = anthropic()!;
-      const resp = await a.messages.create({
-        model: 'claude-sonnet-4-5',
-        max_tokens: 2048,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: opts.mimeType as any, data: opts.imageBase64 } },
-            { type: 'text', text: opts.prompt },
-          ],
-        }],
-      });
-      const text = resp.content
-        .filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text')
-        .map(b => b.text)
-        .join('\n');
-      return { ok: true, provider: 'claude', data: text };
-    }
-
-    // gemini
-    const g = gemini()!;
-    const resp = await g.models.generateContent({
-      model: 'gemini-2.0-flash',
-      contents: [{
-        role: 'user',
-        parts: [
-          { inlineData: { mimeType: opts.mimeType, data: opts.imageBase64 } },
-          { text: opts.prompt },
-        ],
-      }],
-    });
-    return { ok: true, provider: 'gemini', data: resp.text || '' };
+    const result = await scanBase64(opts.imageBase64, opts.mimeType, opts.prompt);
+    // scanBase64 devuelve { raw: jsonObject, provider, model }. Para "texto",
+    // serializamos el raw a JSON string si no se puede simplificar.
+    const text = typeof (result.raw as any)?.text === 'string'
+      ? (result.raw as any).text
+      : JSON.stringify(result.raw);
+    return { ok: true, provider: result.provider, data: text };
   } catch (err: any) {
-    return { ok: false, error: { message: err?.message || 'Error de IA visión', provider } };
+    return { ok: false, error: { message: err?.message || 'Error de IA visión', provider: null } };
   }
 }
 
@@ -143,7 +58,6 @@ export async function aiVision(opts: {
 export async function aiJSON<T = unknown>(opts: {
   prompt: string;
   system?: string;
-  forceProvider?: Provider;
 }): Promise<AIResult<T>> {
   const r = await aiText({
     ...opts,
@@ -151,22 +65,24 @@ export async function aiJSON<T = unknown>(opts: {
   });
   if (r.ok === false) return r;
   try {
-    // intentar extraer JSON aunque venga en un bloque ```json
-    const cleaned = r.data.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
-    const data = JSON.parse(cleaned) as T;
-    return { ok: true, provider: r.provider, data };
+    const parsed = parseJSON(r.data) as T;
+    return { ok: true, provider: r.provider, data: parsed };
   } catch (err: any) {
     return { ok: false, error: { message: 'JSON inválido devuelto por la IA: ' + err.message, provider: r.provider } };
   }
 }
 
-// ── Compat: getAIAdvice (la usaba AIAdvisor.tsx con Gemini) ───────────────────
+// ── Compat: getAIAdvice (la usaba AIAdvisor.tsx) ──────────────────────────────
 export async function getAIAdvice(context: string, userQuery: string): Promise<string> {
   const r = await aiText({
-    system: 'Eres un asesor experto en gestión de restaurantes (basado en la metodología Mise en Place, ingeniería de menú BCG y manuales de elBulli Foundation). Da consejos prácticos, análisis de rentabilidad o sugerencias operativas. Respuestas concisas, en español, con bullets cuando sea útil.',
+    system: 'Eres un asesor experto en gestión de restaurantes (basado en Mise en Place, ingeniería de menú BCG y manuales tipo elBulli Foundation). Da consejos prácticos, análisis de rentabilidad o sugerencias operativas. Respuestas concisas, en español, con bullets cuando sea útil.',
     prompt: `CONTEXTO DEL RESTAURANTE:\n${context}\n\nPREGUNTA DEL USUARIO:\n${userQuery}`,
     maxTokens: 1024,
   });
   if (r.ok === false) return 'Lo siento, no he podido procesar tu consulta. ' + r.error.message;
   return r.data;
 }
+
+// ── Reexports útiles ──────────────────────────────────────────────────────────
+export { askAI, scanBase64, parseJSON } from './aiProviders';
+export { getActiveChatProvider, getActiveVisionProvider, getProvidersStatus } from './aiProviders';

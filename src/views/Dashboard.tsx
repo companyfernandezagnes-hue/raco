@@ -18,6 +18,7 @@ import { supabase } from '../supabase';
 import { useSupabase } from '../context/SupabaseContext';
 import { GoogleGenAI } from '@google/genai';
 import { cn } from '../lib/utils';
+import DailyBriefing from '../components/DailyBriefing';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface DashboardData {
@@ -453,7 +454,10 @@ Tono: directo, profesional, sin rodeos. Máx 200 palabras.`
         )}
       </AnimatePresence>
 
-      {/* ── Alertas activas ── */}
+      {/* ── Briefing diario IA (alertas inteligentes) ── */}
+      <DailyBriefing />
+
+      {/* ── Alertas activas (legacy, complementarias) ── */}
       {data && data.alertas.length > 0 && (
         <div className="space-y-2">
           {data.alertas.map((a, i) => (

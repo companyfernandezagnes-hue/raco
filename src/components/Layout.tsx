@@ -18,6 +18,8 @@ import { twMerge } from 'tailwind-merge';
 import { useSupabase } from '../context/SupabaseContext';
 import { usePin }      from '../context/PinContext';
 import AjustesDrawer  from './AjustesDrawer';
+import AIConsultant   from './AIConsultant';
+import { Bot } from 'lucide-react';
 
 function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)); }
 
@@ -48,6 +50,8 @@ export default function Layout() {
   const navigate             = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [ajustesOpen, setAjustesOpen] = useState(false);
+
+  const [aiOpen, setAiOpen] = useState(false);
 
   const rol = employee?.rol ?? 'camarero';
   const visibleNav = NAV_ITEMS.filter(item => item.roles.includes(rol));
@@ -176,6 +180,28 @@ export default function Layout() {
 
       {/* — Drawer ajustes — */}
       <AjustesDrawer open={ajustesOpen} onClose={() => setAjustesOpen(false)} />
+
+      {/* — Botón flotante AI Consultant — */}
+      {!aiOpen && (
+        <button
+          onClick={() => setAiOpen(true)}
+          title="Hablar con el Director IA"
+          className="fixed bottom-6 right-6 z-[150] w-14 h-14 bg-gradient-to-br from-indigo-600 to-violet-600 rounded-2xl shadow-2xl shadow-indigo-300 text-white hover:scale-105 transition-all flex items-center justify-center"
+        >
+          <Bot size={22} />
+          <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full ring-2 ring-white" />
+        </button>
+      )}
+
+      {/* — Drawer AI Consultant — */}
+      {aiOpen && (
+        <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-end pointer-events-none">
+          <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-sm pointer-events-auto" onClick={() => setAiOpen(false)} />
+          <div className="relative w-full sm:w-[420px] h-[85vh] sm:h-[80vh] sm:mr-6 bg-white sm:rounded-3xl shadow-2xl overflow-hidden pointer-events-auto flex flex-col">
+            <AIConsultant onClose={() => setAiOpen(false)} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
